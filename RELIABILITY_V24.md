@@ -1,0 +1,3 @@
+# FieldNet v24 — Reliability & Availability
+
+Production-only reliability screening. v24 adds seeded Monte Carlo failure/repair simulation using exponential MTBF/MTTR assumptions, planned outage windows, N-required-online redundancy groups, availability percentiles and deferred-production proxies. Reliability status is independent of hydraulic solver convergence. The default production-loss calculation is a screening proxy, not a timestep hydraulic re-solve; use asset-specific failure distributions and coupled re-solves for operational studies. Petroleum percentile labels use P90=conservative, P50=median, P10=optimistic.

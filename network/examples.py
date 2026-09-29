@@ -1,0 +1,7 @@
+def demo_case():
+    wp={'reservoir_pressure_bar':240.0,'ipr_model':'PI','pi_m3d_bar':12.0,'qmax_m3d':1800.0,'initial_pressure_bar':90.0,'initial_rate_m3d':700.0,'depth_m':2200.0,'tubing_id_m':0.0889,'tubing_roughness_m':4.5e-5,'temperature_c':75.0,'water_cut':0.25,'gor_sm3sm3':110.0,'api':36.0,'gas_sg':0.72,'correlation':'Beggs-Brill'}
+    wp2=dict(wp); wp2.update({'reservoir_pressure_bar':225.0,'pi_m3d_bar':9.0,'water_cut':0.40,'gor_sm3sm3':85.0})
+    nodes=[{'id':'w1','kind':'well','name':'PROD-01','pressure_bar':None,'x':0,'y':0,'params':wp}, {'id':'w2','kind':'well','name':'PROD-02','pressure_bar':None,'x':0,'y':0,'params':wp2}, {'id':'m1','kind':'manifold','name':'MAN-01','pressure_bar':None,'x':0,'y':0,'params':{'initial_pressure_bar':55}}, {'id':'s1','kind':'sink','name':'SEP-01','pressure_bar':35.0,'x':0,'y':0,'params':{}}]
+    pp={'temperature_c':50.0,'water_cut':0.30,'gor_sm3sm3':100.0,'api':36.0,'gas_sg':0.72,'initial_rate_m3d':600,'correlation':'Beggs-Brill'}
+    edges=[{'id':'fl1','source':'w1','target':'m1','kind':'pipeline','length_m':3500.0,'diameter_m':0.154,'roughness_m':4.5e-5,'elevation_change_m':20.0,'params':dict(pp)}, {'id':'fl2','source':'w2','target':'m1','kind':'pipeline','length_m':2800.0,'diameter_m':0.154,'roughness_m':4.5e-5,'elevation_change_m':10.0,'params':dict(pp)}, {'id':'trunk','source':'m1','target':'s1','kind':'pipeline','length_m':8000.0,'diameter_m':0.254,'roughness_m':4.5e-5,'elevation_change_m':-15.0,'params':dict(pp)}]
+    return nodes,edges
