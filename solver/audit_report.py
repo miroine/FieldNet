@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 def calculation_audit(nodes,edges,info,details):
     return {
-      'application':'FieldNet v29','author':'Merouane Hamdani','license_note':'For non-commercial use',
+      'application':'FieldNet v29.1','author':'Merouane Hamdani','license_note':'For non-commercial use',
       'generated_utc':datetime.now(timezone.utc).isoformat(),
       'solver_mode':info.get('solver_mode','legacy'),'converged':bool(info.get('success')),
       'quality_gate':info.get('quality_gate','N/A'),'physical_quality_gate':info.get('physical_quality_gate','N/A'),'max_abs_residual':float(info.get('max_abs_residual',0)),'physical_residual_audit':info.get('physical_residual_audit',{}),

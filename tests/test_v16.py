@@ -38,7 +38,7 @@ def test_ui_event_parser_and_exports():
     assert len(events)==1 and events[0].as_forecast_event()["value"] is False
     n,e=demo_case(); result=run_development_scenario(n,e,DevelopmentScenario("Base","2026-01-01",0.1,10),forecast_runner=_fake_runner)
     csv=export_field_csv([result]); js=export_summary_json([result]); payload=json.loads(js)
-    assert "Scenario" in csv and payload["application"]=="FieldNet v29"
+    assert "Scenario" in csv and payload["application"]=="FieldNet v29.1"
     assert len(results_frames([result])[2])==1
 
 

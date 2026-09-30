@@ -54,7 +54,7 @@ def apply_parameters(nodes, edges, parameters, values):
         elif par.kind=='well_skin_add':
             p=nm[par.target_id].setdefault('params',{}); b=float(p.get('_v23_base_skin',p.get('skin',0.0))); p['_v23_base_skin']=b; p['skin']=b+v
         elif par.kind=='edge_roughness_mult':
-            p=em[par.target_id].setdefault('params',{}); key='roughness_m'; b=float(p.get('_v23_base_roughness',p.get(key,4.5e-5))); p['_v23_base_roughness']=b; p[key]=b*v
+            edge=em[par.target_id]; p=edge.setdefault('params',{}); key='roughness_m'; b=float(p.get('_v23_base_roughness',edge.get(key,4.5e-5))); p['_v23_base_roughness']=b; edge[key]=b*v
         elif par.kind=='pump_head_mult':
             p=em[par.target_id].setdefault('params',{}); key='shutoff_head_bar'; b=float(p.get('_v23_base_head',p.get(key,35.0))); p['_v23_base_head']=b; p[key]=b*v
         elif par.kind=='compressor_ratio_mult':

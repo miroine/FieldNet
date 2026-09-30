@@ -39,7 +39,7 @@ def test_monte_carlo_reproducible_exports_and_success_counts():
     cfg=MonteCarloConfig(12,77,'lhs',[p]); sc=DevelopmentScenario('MC','2026-01-01',.03,10)
     a=run_monte_carlo(n,e,sc,cfg,forecast_runner=fake_runner); b=run_monte_carlo(n,e,sc,cfg,forecast_runner=fake_runner)
     assert a['runs']==b['runs'] and a['successful_samples']==12 and a['metrics']['cumulative_oil_m3']['P90'] <= a['metrics']['cumulative_oil_m3']['P10']
-    assert 'cumulative_oil_m3' in export_mc_csv(a) and json.loads(export_mc_json(a))['application']=='FieldNet v29'
+    assert 'cumulative_oil_m3' in export_mc_csv(a) and json.loads(export_mc_json(a))['application']=='FieldNet v29.1'
 
 def test_ui_parser():
     r=parse_uncertainty_rows([{'name':'x','target_id':'w1','path':'params.pi_m3d_bar','operation':'multiply','distribution':'triangular','low':.8,'mode':1,'high':1.2,'mean':1,'std':.1}]); assert len(r)==1 and r[0].name=='x'

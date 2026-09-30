@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 from network.interchange_v27 import validate_project
 
-APPLICATION='FieldNet v29'
+APPLICATION='FieldNet v29.1'
 SCHEMA_VERSION='29.0'
 
 def _canon(x:Any)->str:
@@ -70,10 +70,19 @@ def run_manifest(snapshot,*,run_type='scenario',settings=None,result_summary=Non
     body={'application':APPLICATION,'schema_version':SCHEMA_VERSION,'snapshot_id':snapshot['snapshot_id'],'snapshot_sha256':snapshot['content_sha256'],'run_type':run_type,'settings':copy.deepcopy(settings or {}),'result_summary':copy.deepcopy(result_summary or {}),'qa_gate':(snapshot.get('qa') or {}).get('quality_gate')}
     body['manifest_sha256']=hashlib.sha256(_canon(body).encode()).hexdigest(); return body
 
+def verify_manifest(m):
+    if not isinstance(m,dict) or 'manifest_sha256' not in m: return {'ok':False,'reason':'missing manifest_sha256'}
+    body=copy.deepcopy(m); stored=body.pop('manifest_sha256',None)
+    expected=hashlib.sha256(_canon(body).encode()).hexdigest()
+    return {'ok':stored==expected,'expected_sha256':expected,'stored_sha256':stored}
+
 def export_scenario_archive(snapshots,manifests=None)->bytes:
     if not snapshots: raise ValueError('at least one snapshot required')
     for s in snapshots:
         if not verify_snapshot(s)['ok']: raise ValueError('snapshot hash verification failed')
+    for m in manifests or []:
+        if not verify_manifest(m)['ok']: raise ValueError('run manifest hash verification failed')
+        if m.get('snapshot_id') not in {s['snapshot_id'] for s in snapshots}: raise ValueError('run manifest references snapshot not present in archive')
     index={'application':APPLICATION,'schema_version':SCHEMA_VERSION,'snapshot_ids':[s['snapshot_id'] for s in snapshots],'snapshot_count':len(snapshots)}
     buf=io.BytesIO()
     with zipfile.ZipFile(buf,'w',zipfile.ZIP_DEFLATED) as z:
@@ -94,4 +103,7 @@ def import_scenario_archive(data:bytes):
             if not verify_snapshot(s)['ok']: raise ValueError(f'snapshot hash mismatch: {sid}')
             snaps.append(s)
         runs=[json.loads(z.read(n)) for n in names if n.startswith('runs/') and n.endswith('.json')]
+        for m in runs:
+            if not verify_manifest(m)['ok']: raise ValueError('run manifest hash mismatch')
+            if m.get('snapshot_id') not in {s['snapshot_id'] for s in snaps}: raise ValueError('run manifest references unknown snapshot')
     return {'index':idx,'snapshots':snaps,'manifests':runs}

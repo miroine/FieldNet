@@ -18,7 +18,7 @@ def test_duplicate_node_rejected():
  n,e=demo_case(); x=copy.deepcopy(n); x[1]['id']=x[0]['id']; assert any(i['severity']=='error' for i in validate_project(x,e))
 
 def test_project_package_roundtrip_and_manifest():
- n,e=demo_case(); b=export_project_package(n,e,'field'); r=import_project_package(b); assert r['ok'] and r['manifest']['application']=='FieldNet v29' and r['manifest']['storage_units']=='canonical'; assert r['nodes']==n
+ n,e=demo_case(); b=export_project_package(n,e,'field'); r=import_project_package(b); assert r['ok'] and r['manifest']['application']=='FieldNet v29.1' and r['manifest']['storage_units']=='canonical'; assert r['nodes']==n
 
 def test_package_contains_canonical_json_and_display_csv():
  n,e=demo_case(); b=export_project_package(n,e,'field'); z=zipfile.ZipFile(io.BytesIO(b)); p=json.loads(z.read('project.json')); assert p['storage_units']=='canonical' and p['nodes'][0]['params']['reservoir_pressure_bar']==240.0; assert b'psi' not in z.read('project.json')

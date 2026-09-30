@@ -13,7 +13,7 @@ body{margin:0;background:#0e1117;color:#f3f5f7;font:13px system-ui,-apple-system
 .badge.FAILED{background:#3d1518;color:#ff8a8a;border-color:#8a2a2f}
 .spin{width:10px;height:10px;border:2px solid #ffd16655;border-top-color:#ffd166;border-radius:50%;animation:sp 0.8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
-.wrap{display:flex;height:590px}
+.wrap{display:flex;height:812px}
 .palette{width:132px;border-right:1px solid #343a43;padding:8px;background:#11161e;overflow:auto}
 .palette button{width:100%;margin:3px 0;text-align:left;background:#202733;color:#fff;border:1px solid #46505f;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit}
 .palette .hint{margin-top:10px;font-size:11px;opacity:.6;line-height:1.35}
@@ -56,7 +56,7 @@ svg#edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z
 <div id="vp"><canvas id="grid"></canvas><div id="world"><svg id="edges"></svg></div><div id="status" class="status">Ready</div><div id="msg" class="msg" style="display:none"></div></div></div>
 <script>
 const SCHEMA='fieldnet.graph/1';
-const TYPES=['well','manifold','separator','sink','water_source','water_injector'];
+const TYPES=[['reservoir','Reservoir tank'],['well','Well'],['manifold','Manifold'],['separator','Separator'],['separator_stage','Separator stage'],['sink','Sink'],['oil_export','Oil export'],['gas_export','Gas export'],['water_disposal','Water disposal'],['water_source','Water source'],['gas_source','Gas source'],['water_injector','Water injector'],['gas_injector','Gas injector']];
 const COLORS={well:'#29b6f6',manifold:'#9fa8da',separator:'#66bb6a',separator_stage:'#66bb6a',sink:'#ef5350',oil_export:'#ef5350',gas_export:'#ef5350',water_disposal:'#ef5350',water_source:'#4dd0e1',gas_source:'#ffb74d',water_injector:'#4dd0e1',gas_injector:'#ffb74d',reservoir:'#8d6e63'};
 const NODE_W=154, PORT_Y=37;
 let state={nodes:[],edges:[],p:{},q:{},status:'UNSOLVED',message:''};
@@ -69,7 +69,7 @@ const SVGNS='http://www.w3.org/2000/svg';
 
 /* ---------- Streamlit plumbing: only graph/selection edits are sent ---------- */
 function send(){rev+=1;parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:{schema:SCHEMA,rev:Date.now()+'-'+rev,nodes:state.nodes,edges:state.edges,selected}},'*')}
-function frame(h=640){parent.postMessage({isStreamlitMessage:true,type:'streamlit:setFrameHeight',height:h},'*')}
+function frame(h=860){parent.postMessage({isStreamlitMessage:true,type:'streamlit:setFrameHeight',height:h},'*')}
 function snap(){return JSON.stringify({nodes:state.nodes,edges:state.edges})}
 function checkpoint(){undo.push(snap());if(undo.length>60)undo.shift();redo=[];tools()}
 function restore(s){const x=JSON.parse(s);state.nodes=x.nodes;state.edges=x.edges;selected=null;render();send()}
@@ -93,12 +93,14 @@ window.addEventListener('resize',()=>applyView());
 /* ---------- graph helpers ---------- */
 function defaults(k,x,y){const n={id:uid(),kind:k,name:k.toUpperCase()+'-'+(state.nodes.length+1),pressure_bar:null,x,y,params:{}};
  if(k==='well')n.params={reservoir_pressure_bar:220,ipr_model:'PI',pi_m3d_bar:10,qmax_m3d:1500,initial_rate_m3d:500,depth_m:2000,tubing_id_m:.0889,tubing_roughness_m:4.5e-5,temperature_c:70,water_cut:.2,gor_sm3sm3:100,api:35,gas_sg:.75,vlp_model:'Beggs-Brill',available:true};
- if(k==='sink'||k==='separator')n.pressure_bar=35;if(k==='water_source')n.pressure_bar=180;
+ if(['sink','separator','separator_stage','oil_export','gas_export','water_disposal'].includes(k))n.pressure_bar=35;if(k==='water_source'||k==='gas_source')n.pressure_bar=180;
+ if(k==='reservoir')n.params={reservoir_pressure_bar:250,pore_volume_m3:2000000,total_compressibility_1bar:8e-5,min_pressure_bar:20};
+ if(k==='gas_injector')n.params={injection_fluid:'gas',injectivity_m3d_bar:10,reservoir_pressure_bar:200,depth_m:2000,available:true};
  if(k==='water_injector')n.params={injection_fluid:'water',injectivity_m3d_bar:10,reservoir_pressure_bar:200,depth_m:2000,available:true};return n}
 function edgeDefault(a,b){return {id:uid(),source:a,target:b,kind:'pipeline',length_m:1000,diameter_m:.154,roughness_m:4.5e-5,elevation_change_m:0,params:{temperature_c:50,water_cut:.2,gor_sm3sm3:100,api:35,gas_sg:.75,initial_rate_m3d:500,correlation:'Beggs-Brill',cv:80,shutoff_head_bar:35,rated_rate_m3d:1500,efficiency:.75,pressure_ratio:1.8,max_discharge_bar:250,opening:1,speed_fraction:1,map_enabled:false,rated_gas_rate_sm3d:150000}}}
 function nodeById(id){return state.nodes.find(n=>n.id===id)}
 function connectionProblem(a,b){if(!a||!b)return 'Drop on a component';if(a===b)return 'Cannot connect a component to itself';if(state.edges.some(e=>e.source===a&&e.target===b))return 'Already connected';return null}
-TYPES.forEach(k=>{const b=document.createElement('button');b.textContent='+ '+k.replace('_',' ');b.onclick=()=>{const r=vp.getBoundingClientRect();const c=toWorld(r.left+r.width/2,r.top+r.height/2);const off=(state.nodes.length%5)*18;checkpoint();const n=defaults(k,Math.round(c.x-NODE_W/2+off),Math.round(c.y-37+off));state.nodes.push(n);selected=n.id;render();send();say('Added '+n.name)};document.getElementById('pal').appendChild(b)});
+TYPES.forEach(([k,label])=>{const b=document.createElement('button');b.textContent='+ '+label;b.onclick=()=>{const r=vp.getBoundingClientRect();const c=toWorld(r.left+r.width/2,r.top+r.height/2);const off=(state.nodes.length%5)*18;checkpoint();const n=defaults(k,Math.round(c.x-NODE_W/2+off),Math.round(c.y-37+off));state.nodes.push(n);selected=n.id;render();send();say('Added '+n.name)};document.getElementById('pal').appendChild(b)});
 
 /* ---------- rendering ---------- */
 const els={};
@@ -167,7 +169,7 @@ window.addEventListener('keydown',ev=>{if((ev.key==='Delete'||ev.key==='Backspac
 function applyArgs(a){state.nodes=JSON.parse(JSON.stringify(a.nodes||[]));state.edges=JSON.parse(JSON.stringify(a.edges||[]));state.p=a.pressures||{};state.q=a.rates||{};
  if(a.selected!==undefined&&a.selected!==null)selected=a.selected;if(selected&&!nodeById(selected)&&!state.edges.some(e=>e.id===selected))selected=null;
  setStatus(a.status,a.status_message);render();if(firstRender){firstRender=false;fit()}}
-window.addEventListener('message',ev=>{const d=ev.data;if(!d||d.type!=='streamlit:render')return;const a=d.args||{};frame(a.height||640);
+window.addEventListener('message',ev=>{const d=ev.data;if(!d||d.type!=='streamlit:render')return;const a=d.args||{};frame(a.height||860);document.querySelector('.wrap').style.height=((a.height||860)-48)+'px';applyView();
  if(mode){pending=a;return} // never yank the graph away mid-gesture
  applyArgs(a)});
 parent.postMessage({isStreamlitMessage:true,type:'streamlit:componentReady',apiVersion:1},'*');frame();applyView();

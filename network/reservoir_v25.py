@@ -10,7 +10,7 @@ import copy
 
 from network.reservoir import ReservoirTank, tank_from_dict
 
-APPLICATION = "FieldNet v25"
+APPLICATION = "FieldNet v29.1"
 
 @dataclass(frozen=True)
 class AquiferSpec:
@@ -85,10 +85,17 @@ def step_coupled_tanks(tanks: Mapping[str, ReservoirTank], withdrawals_m3: Mappi
         pa,pb=pre[l.tank_a],pre[l.tank_b]
         if pa >= pb: src,dst,dp=l.tank_a,l.tank_b,pa-pb
         else: src,dst,dp=l.tank_b,l.tank_a,pb-pa
-        rate=min(max(l.transmissibility_m3d_bar,0.0)*dp,max(l.max_transfer_m3d,0.0))
-        vol=rate*max(float(dt_days),0.0)
+        dt=max(float(dt_days),0.0)
+        raw_rate=min(max(l.transmissibility_m3d_bar,0.0)*dp,max(l.max_transfer_m3d,0.0))
+        raw_vol=raw_rate*dt
+        csrc=max(float(tanks[src].pore_volume_m3)*float(tanks[src].total_compressibility_1bar),1e-12)
+        cdst=max(float(tanks[dst].pore_volume_m3)*float(tanks[dst].total_compressibility_1bar),1e-12)
+        equalize_vol=dp/(1.0/csrc+1.0/cdst) if dp>0 else 0.0
+        donor_available=max((pre[src]-float(tanks[src].min_pressure_bar))*csrc,0.0)
+        vol=min(raw_vol,equalize_vol,donor_available)
+        rate=vol/dt if dt>0 else 0.0
         comm_out[src]+=vol; comm_in[dst]+=vol
-        transfers.append({'from':src,'to':dst,'delta_p_bar':dp,'rate_m3d':rate,'volume_m3':vol})
+        transfers.append({'from':src,'to':dst,'delta_p_bar':dp,'rate_m3d':rate,'uncapped_rate_m3d':raw_rate,'volume_m3':vol,'stability_limited':vol < raw_vol-1e-12})
     ledger=[]
     for tid,t in tanks.items():
         w=max(float(withdrawals_m3.get(tid,0.0)),0.0)

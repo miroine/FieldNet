@@ -40,7 +40,7 @@ from network.coupled_forecast_v25 import run_coupled_forecast_v25
 BOUNDARY_KINDS=('sink','separator','separator_stage','oil_export','gas_export','water_disposal','water_source','gas_source')
 LINK_TYPES=['pipeline','choke','control_valve','pump','compressor']
 
-st.set_page_config(page_title='FieldNet v30',page_icon='⛽',layout='wide')
+st.set_page_config(page_title='FieldNet v30.2',page_icon='⛽',layout='wide')
 if 'theme_name' not in st.session_state: st.session_state.theme_name='Equinor-inspired Light'
 if 'unit_profile' not in st.session_state: st.session_state.unit_profile='norwegian_si'
 with st.sidebar:
@@ -51,7 +51,7 @@ with st.sidebar:
     with st.expander('Unit reference conditions'):
         st.write(f"Standard volumes: {STANDARD_CONDITIONS['standard_temperature_c']:.0f} °C and {STANDARD_CONDITIONS['standard_pressure_bara']:.5f} bara. Pressure-dependent PVT uses absolute pressure.")
 apply_theme(st,st.session_state.theme_name)
-st.markdown("<div class='fieldnet-brand'><h2>FieldNet v30 — Integrated Production Network</h2><p>Made by Merouane Hamdani · For non-commercial use · Independent engineering prototype</p></div>",unsafe_allow_html=True)
+st.markdown("<div class='fieldnet-brand'><h2>FieldNet v30.2 — Integrated Production Network</h2><p>Made by Merouane Hamdani · For non-commercial use · Independent engineering prototype</p></div>",unsafe_allow_html=True)
 st.caption('Equinor-inspired themes are unofficial and are not affiliated with, endorsed by, or sponsored by Equinor ASA. Validate engineering correlations before operational use.')
 if 'nodes' not in st.session_state: st.session_state.nodes,st.session_state.edges=demo_case()
 if 'solve' not in st.session_state: st.session_state.solve=None
@@ -98,9 +98,10 @@ def request_solve():
 
 with st.sidebar:
     st.header('Component palette')
-    kind=st.selectbox('Component',['well','manifold','separator','separator_stage','water_source','gas_source','water_injector','gas_injector','oil_export','gas_export','water_disposal','sink']); name=st.text_input('Name',f'{kind.upper()}-{len(st.session_state.nodes)+1:02d}')
+    kind=st.selectbox('Component',['reservoir','well','manifold','separator','separator_stage','water_source','gas_source','water_injector','gas_injector','oil_export','gas_export','water_disposal','sink']); name=st.text_input('Name',f'{kind.upper()}-{len(st.session_state.nodes)+1:02d}')
     if st.button('Add component',use_container_width=True):
         nid=str(uuid.uuid4())[:8]; pressure=None; prm={}
+        if kind=='reservoir': prm={'reservoir_pressure_bar':250.0,'pore_volume_m3':2000000.0,'total_compressibility_1bar':8e-5,'min_pressure_bar':20.0}
         if kind=='well': prm={'reservoir_pressure_bar':220.0,'ipr_model':'PI','pi_m3d_bar':10.0,'qmax_m3d':1500.0,'initial_rate_m3d':500.0,'depth_m':2000.0,'tubing_id_m':0.0889,'tubing_roughness_m':4.5e-5,'temperature_c':70.0,'water_cut':0.2,'gor_sm3sm3':100.0,'api':35.0,'gas_sg':0.75,'vlp_model':'Beggs-Brill','available':True}
         if kind in ('sink','separator','separator_stage','oil_export','gas_export','water_disposal'): pressure=35.0
         if kind in ('water_source','gas_source'): pressure=180.0
@@ -112,10 +113,10 @@ with st.sidebar:
 
 tab_net,tab_nodal,tab_diag,tab_fa,tab_results,tab_constraints,tab_ops,tab_cal,tab_forecast,tab_development,tab_dev26,tab_uncertainty,tab_rel,tab_res25,tab_io27,tab_qa28,tab_scen29=st.tabs(['Network','Nodal analysis','Hydraulic profiles','Flow assurance','Results','Constraints & equipment','Optimization & sensitivity','Calibration','Life-of-field','Field Development','Development Planning','Uncertainty','Reliability','Reservoir coupling','Data & interoperability','Model assurance','Scenarios'])
 with tab_net:
-    canvas,props=st.columns([2.1,1])
+    canvas,props=st.columns([3.2,1])
     with canvas:
         status,status_msg=solve_status(st.session_state)
-        edit=network_editor(st.session_state.nodes, st.session_state.edges, solved(), key='network-v14',
+        edit=network_editor(st.session_state.nodes, st.session_state.edges, solved(), key='network-v14', height=860,
                             status=status, status_message=status_msg, selected=st.session_state.get('selected'))
         # One contract (ui/graph_contract.py): only a new canvas revision is an edit; stale replays are ignored.
         if accept_canvas_payload(st.session_state, edit)=='graph': st.rerun()
@@ -191,6 +192,12 @@ with tab_net:
                     cap=unit_input(f"Liquid handling capacity (0 = none) [{ul['liquid_rate']}]",float(clean_num(p.get('max_liquid_rate_m3d'),0.0)),liquid_rate_to_display,liquid_rate_from_display,'bcap'+sid,0.,1e8)
                     if cap>0: p['max_liquid_rate_m3d']=cap
                     else: p.pop('max_liquid_rate_m3d',None)
+            if n['kind']=='reservoir':
+                p['reservoir_pressure_bar']=unit_input(f"Tank pressure [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),250.0)),pressure_to_display,pressure_from_display,'rpr'+sid,1.0,1500.0)
+                p['pore_volume_m3']=synced_number(st,'Tank pore volume [m³]',float(clean_num(p.get('pore_volume_m3'),2e6)),'rpv'+sid,1.0,1e12)
+                p['total_compressibility_1bar']=synced_number(st,'Total compressibility [1/bar]',float(clean_num(p.get('total_compressibility_1bar'),8e-5)),'rct'+sid,1e-7,1e-2,fmt='%.2e')
+                p['min_pressure_bar']=unit_input(f"Minimum tank pressure [{ul['pressure']}]",float(clean_num(p.get('min_pressure_bar'),20.0)),pressure_to_display,pressure_from_display,'rmp'+sid,0.0,1500.0)
+                st.caption('A reservoir tank is a fixed-pressure boundary for the network solve and seeds the Reservoir-coupling tab.')
             if n['kind'] in ('water_injector','gas_injector'):
                 p['injectivity_m3d_bar']=synced_number(st,'Injectivity index [m³/d/bar]',float(clean_num(p.get('injectivity_m3d_bar'),10.0)),'ii'+sid,0.0,1e5)
                 p['reservoir_pressure_bar']=unit_input(f"Reservoir pressure [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),200.0)),pressure_to_display,pressure_from_display,'ipr'+sid,1.,1500.)
@@ -535,9 +542,15 @@ with tab_res25:
     st.caption('Reduced-order quasi-steady material balance coupled to the production network. Communicating tanks, aquifer influx and injector connectivity are planning models—not a 3-D reservoir simulator.')
     wells25=[n for n in st.session_state.nodes if n.get('kind')=='well']
     default_tanks=[]
-    for i,w in enumerate(wells25):
-        rp=float(w.get('params',{}).get('reservoir_pressure_bar',220.0))
-        default_tanks.append({'id':f'T{i+1}','name':f'Tank {i+1}','pressure_bar':rp,'pore_volume_m3':2e6,'total_compressibility_1bar':8e-5,'min_pressure_bar':20.0})
+    canvas_tanks=[n for n in st.session_state.nodes if n.get('kind')=='reservoir']
+    if canvas_tanks:
+        for n in canvas_tanks:
+            rp=n.get('params',{}) or {}
+            default_tanks.append({'id':n['id'],'name':n.get('name',n['id']),'pressure_bar':float(clean_num(rp.get('reservoir_pressure_bar'),250.0)),'pore_volume_m3':float(clean_num(rp.get('pore_volume_m3'),2e6)),'total_compressibility_1bar':float(clean_num(rp.get('total_compressibility_1bar'),8e-5)),'min_pressure_bar':float(clean_num(rp.get('min_pressure_bar'),20.0))})
+    else:
+        for i,w in enumerate(wells25):
+            rp=float(clean_num(w.get('params',{}).get('reservoir_pressure_bar'),220.0))
+            default_tanks.append({'id':f'T{i+1}','name':f'Tank {i+1}','pressure_bar':rp,'pore_volume_m3':2e6,'total_compressibility_1bar':8e-5,'min_pressure_bar':20.0})
     tdf=st.data_editor(pd.DataFrame(default_tanks),num_rows='dynamic',use_container_width=True,key='v25_tanks')
     maprows=[]
     tids=[clean_text(x) for x in tdf.get('id',pd.Series(dtype=str)).tolist() if clean_text(x)]

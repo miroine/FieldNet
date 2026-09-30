@@ -12,7 +12,7 @@ from solver.v21 import topology_precheck
 from network.interchange_v27 import validate_project
 from physics.unit_system import STANDARD_CONDITIONS
 
-APPLICATION='FieldNet v29'
+APPLICATION='FieldNet v29.1'
 SCHEMA_VERSION='28.0'
 
 def _issue(severity, code, message, component=None, field=None, value=None, recommendation=None, stage='pre_solve'):
@@ -67,6 +67,14 @@ def pre_solve_assurance(nodes, edges, *, unit_profile='norwegian_si'):
 
 def post_solve_assurance(nodes, edges, pressures, flows, info):
     issues=[]; audit=info.get('physical_residual_audit',{}) or {}
+    for k,v in (pressures or {}).items():
+        try: finite=math.isfinite(float(v))
+        except Exception: finite=False
+        if not finite: issues.append(_issue('error','NONFINITE_SOLVED_VALUE','Solved pressure is non-finite.',k,value=str(v),stage='post_solve'))
+    for k,v in (flows or {}).items():
+        try: finite=math.isfinite(float(v))
+        except Exception: finite=False
+        if not finite: issues.append(_issue('error','NONFINITE_SOLVED_VALUE','Solved flow is non-finite.',k,value=str(v),stage='post_solve'))
     if not info.get('success'): issues.append(_issue('error','SOLVER_NONCONVERGED','Network solver did not converge.',stage='post_solve'))
     mp=float(audit.get('max_pressure_residual_bar',0) or 0); mm=float(audit.get('max_mass_residual_m3d',0) or 0)
     if mp>1e-3: issues.append(_issue('error','PRESSURE_CLOSURE','Physical pressure-equation residual exceeds 0.001 bar.',value=mp,stage='post_solve'))
@@ -76,7 +84,7 @@ def post_solve_assurance(nodes, edges, pressures, flows, info):
     for c in info.get('constraints',[]):
         if c.get('Status')=='VIOLATED': issues.append(_issue('warning','OPERATING_LIMIT','Operating constraint is violated.',component=c.get('Component'),stage='post_solve'))
     for k,v in pressures.items():
-        if float(v)<=0: issues.append(_issue('error','SOLVED_PRESSURE','Solved pressure is non-positive.',k,value=v,stage='post_solve'))
+        if math.isfinite(float(v)) and float(v)<=0: issues.append(_issue('error','SOLVED_PRESSURE','Solved pressure is non-positive.',k,value=v,stage='post_solve'))
     if not issues: issues.append(_issue('info','POSTSOLVE_COMPLETE','Convergence, residual closure and operating-limit checks passed.',stage='post_solve'))
     return issues
 
@@ -87,7 +95,8 @@ def forecast_assurance(forecast):
     if dates!=sorted(dates): issues.append(_issue('error','FORECAST_TIME_ORDER','Forecast dates are not monotonic.',stage='forecast'))
     for i,r in enumerate(rows):
         for key in ('Oil [m3/d]','Water [m3/d]','Total liquid [m3/d]','Gas [Sm3/d]','Cumulative liquid [m3]'):
-            if key in r and float(r[key]) < -1e-9: issues.append(_issue('error','NEGATIVE_FORECAST','Forecast contains a negative production/cumulative value.',f'row:{i}',key,r[key],stage='forecast'))
+            if key in r and not math.isfinite(float(r[key])): issues.append(_issue('error','NONFINITE_FORECAST','Forecast contains a non-finite value.',f'row:{i}',key,str(r[key]),stage='forecast'))
+            elif key in r and float(r[key]) < -1e-9: issues.append(_issue('error','NEGATIVE_FORECAST','Forecast contains a negative production/cumulative value.',f'row:{i}',key,r[key],stage='forecast'))
     if not issues: issues.append(_issue('info','FORECAST_COMPLETE','Forecast chronology and non-negative production checks passed.',stage='forecast'))
     return issues
 

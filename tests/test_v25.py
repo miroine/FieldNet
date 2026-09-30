@@ -41,7 +41,7 @@ def test_forecast_exact_horizon_and_base_isolation():
     mapping={'w1':'T1','w2':'T2'}
     r=run_coupled_forecast_v25(nodes,edges,tanks,mapping,'2026-01-01',years=0.1,step_days=30,communication_links=[CommunicationLink('T1','T2',0.1)])
     assert r['field'] and sum(x['dt_days'] for x in r['field'])==pytest.approx(0.1*365.25)
-    assert nodes==n0 and edges==e0 and r['application']=='FieldNet v29'
+    assert nodes==n0 and edges==e0 and r['application']=='FieldNet v29.1'
 
 def test_forecast_material_balance_ledger_has_required_terms():
     nodes,edges=demo_case(); tanks=[{'id':'T1','name':'T1','initial_pressure_bar':240,'pressure_bar':240},{'id':'T2','name':'T2','initial_pressure_bar':225,'pressure_bar':225}]

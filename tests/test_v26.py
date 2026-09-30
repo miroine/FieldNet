@@ -24,4 +24,4 @@ def test_facility_expansion_compiles_explicit_value():
  n,e=demo_case(); c=compile_plan(plan([DevelopmentTask('A','Expand','facility_expansion','s1','2026-01-01',20,value=5000)]),n,e); ev=c['events'][0].as_forecast_event(); assert ev['field']=='params.max_rate_m3d' and ev['value']==5000
 
 def test_run_isolation_and_exact_horizon():
- n,e=demo_case(); n0=copy.deepcopy(n); r=run_development_plan(n,e,plan([DevelopmentTask('A','Drill','drill_well','w1','2026-01-01',5)])); assert n==n0 and r['application']=='FieldNet v29' and r['forecast']['field']
+ n,e=demo_case(); n0=copy.deepcopy(n); r=run_development_plan(n,e,plan([DevelopmentTask('A','Drill','drill_well','w1','2026-01-01',5)])); assert n==n0 and r['application']=='FieldNet v29.1' and r['forecast']['field']

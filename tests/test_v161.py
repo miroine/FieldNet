@@ -42,12 +42,12 @@ def test_v161_export_consistency_and_identity():
     n,e=demo_case(); r=run_development_scenario(n,e,DevelopmentScenario('Base','2026-01-01',0.1,30),forecast_runner=_timeline_runner)
     field, constraints, summary=results_frames([r])
     payload=json.loads(export_summary_json([r])); csv=export_field_csv([r])
-    assert payload['application']=='FieldNet v29'
+    assert payload['application']=='FieldNet v29.1'
     assert payload['scenarios'][0]['kpis']['cumulative_oil_m3']==summary.iloc[0]['Cumulative oil [m3]']
     assert len(csv.strip().splitlines())==len(field)+1 and constraints.empty
 
 
 def test_v161_audit_identity_and_physical_gate_present():
     n,e=demo_case(); p,q,info,details=solve_professional(n,e); a=calculation_audit(n,e,info,details)
-    assert a['application']=='FieldNet v29'
+    assert a['application']=='FieldNet v29.1'
     assert 'physical_quality_gate' in a and a['author']=='Merouane Hamdani'

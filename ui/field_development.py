@@ -59,7 +59,7 @@ def export_field_csv(results: list[dict[str, Any]]) -> str:
 
 
 def export_summary_json(results: list[dict[str, Any]]) -> str:
-    payload = {"application": "FieldNet v29", "scenarios": []}
+    payload = {"application": "FieldNet v29.1", "scenarios": []}
     for result in results:
         scenario = result["scenario"]
         payload["scenarios"].append({"definition": asdict(scenario), "kpis": result["kpis"]})

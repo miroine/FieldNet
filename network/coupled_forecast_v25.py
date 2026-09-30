@@ -49,5 +49,5 @@ def run_coupled_forecast_v25(nodes, edges, tanks, well_to_tank, start_date, year
         field.append({'Date':date,'Day':tday,'dt_days':dt,'Total liquid [m3/d]':tl,'Oil [m3/d]':oil,'Water [m3/d]':wat,'Gas [Sm3/d]':gas,
                       'Injection [m3/d]':sum(inj_rates.values()),'Converged':info.get('success',False),'Violations':info.get('violations',0),'Message':info.get('message','')})
         tday+=dt
-    return {'application':'FieldNet v29','field':field,'wells':wells,'tanks':tank_rows,'transfers':transfers,'constraints':constraints,
+    return {'application':'FieldNet v29.1','field':field,'wells':wells,'tanks':tank_rows,'transfers':transfers,'constraints':constraints,
             'final_tanks':{k:v.to_dict() for k,v in ts.items()}}

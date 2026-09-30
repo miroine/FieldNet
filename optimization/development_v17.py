@@ -33,4 +33,4 @@ def optimize_development(nodes,edges,scenario:DevelopmentScenario,decisions:list
         r=run_development_scenario(nn,ee,copy.deepcopy(scenario),**kwargs)
         return -float(r['kpis'].get(objective,0.0))
     res=differential_evolution(evaluate,[(d.low,d.high) for d in decisions],seed=1701,maxiter=max(1,int(maxiter)),polish=True,workers=1,updating='immediate')
-    return {'application':'FieldNet v21','success':bool(res.success),'feasible':bool(np.isfinite(res.fun)),'message':str(res.message),'objective':objective,'objective_value':float(-res.fun),'decisions':{d.name:float(v) for d,v in zip(decisions,res.x)},'evaluations':int(res.nfev)}
+    return {'application':'FieldNet v29.1','success':bool(res.success),'feasible':bool(np.isfinite(res.fun)),'message':str(res.message),'objective':objective,'objective_value':float(-res.fun),'decisions':{d.name:float(v) for d,v in zip(decisions,res.x)},'evaluations':int(res.nfev)}

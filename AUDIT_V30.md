@@ -85,3 +85,21 @@ Audit of FieldNet v29 (Streamlit GAP-style production network solver). All findi
 - **New model check `LOOP_ELEVATION_MISMATCH`:** elevation changes around a closed loop must sum to zero, otherwise hydrostatics drive a fictitious circulating flow.
 - **Solver:** the first solve pass is shorter, because re-seeding wells on their stable branch recovers faster from a poor start (a looped network went from 8 s to under 0.3 s).
 - **Tests:** 232 Python tests pass. `tests/browser/run_editor_browser_test.py` runs 20 real-Chromium checks of the editor (optional, needs Playwright).
+
+
+## v30.2 — Merge with v29.1 + deployment fix
+
+- **Deployment error `cannot import name 'DEFAULT_VLP_SEGMENTS'`:** this was not a code bug. v30.1 was uploaded to GitHub in four batches and Streamlit Cloud redeployed after each one. One deploy ran the new `physics/well_model.py` against the old `physics/vlp.py`. Upload all changed files in **one** commit.
+- **Restored the v29.1 corrective fixes that v30/v30.1 had overwritten** (v30 was built from the v29 zip), using a three-way merge (v29 base → v29.1 + v30.1):
+  - NaN/Inf rejection at CSV/project validation and in Model Assurance.
+  - Roughness calibration writes the solver's `roughness_m`.
+  - Reliability uses exact intervals and clips the final timestep.
+  - Stiff reservoir links cannot overshoot pressure equalisation.
+  - Run-manifest SHA-256 verification.
+- **Ported the v29.1 editor features into the v30.1 editor:**
+  - Full palette: reservoir tank, separator stage, exports and disposal, gas source and gas injector.
+  - 860 px canvas.
+  - Reservoir-tank properties panel.
+  - Canvas reservoir tanks seed the Reservoir-coupling tab.
+- **Solver:** networks with only one or two unknowns (e.g. reservoir tank → sink) crashed in SciPy's sparse Jacobian path; they now use a dense Jacobian.
+- **Tests:** 244/244 pass (232 v30.1 + 12 v29.1). The browser editor test passes 20/20.

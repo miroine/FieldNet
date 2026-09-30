@@ -4,13 +4,13 @@ Canonical project storage is preserved. Tabular import/export may use canonical,
 Norwegian SI, or Field display values; conversion occurs only at the boundary.
 """
 from __future__ import annotations
-import copy, csv, io, json, zipfile, hashlib
+import copy, csv, io, json, zipfile, hashlib, math
 from datetime import datetime, timezone
 from typing import Any
 from physics.unit_system import PROFILES, STANDARD_CONDITIONS, convert_mapping_units
 from ui.history import normalize_project
 
-APPLICATION='FieldNet v29'
+APPLICATION='FieldNet v29.1'
 SCHEMA_VERSION='27.0'
 NODE_COLUMNS=['id','kind','name','pressure_bar','x','y','params_json']
 EDGE_COLUMNS=['id','source','target','kind','length_m','diameter_m','roughness_m','elevation_change_m','params_json']
@@ -22,8 +22,22 @@ def _profile(profile):
 def _display(obj, profile, direction):
     return copy.deepcopy(obj) if profile=='canonical' else convert_mapping_units(obj,profile,direction)
 
+def _nonfinite_paths(obj, prefix=''):
+    out=[]
+    if isinstance(obj, dict):
+        for k,v in obj.items(): out.extend(_nonfinite_paths(v, f"{prefix}.{k}" if prefix else str(k)))
+    elif isinstance(obj, (list,tuple)):
+        for i,v in enumerate(obj): out.extend(_nonfinite_paths(v, f"{prefix}[{i}]"))
+    elif isinstance(obj, (int,float)) and not isinstance(obj,bool) and not math.isfinite(float(obj)):
+        out.append(prefix or '*')
+    return out
+
 def validate_project(nodes:list[dict], edges:list[dict])->list[dict]:
     issues=[]
+    for table, rows in (('nodes',nodes),('edges',edges)):
+        for i,row in enumerate(rows,2):
+            for path in _nonfinite_paths(row):
+                issues.append({'table':table,'row':i,'field':path,'severity':'error','message':'numeric value must be finite'})
     ids=[]
     for i,n in enumerate(nodes,2):
         nid=str(n.get('id','')).strip(); kind=str(n.get('kind','')).strip()
@@ -68,7 +82,10 @@ def export_tables(nodes,edges,profile='canonical'):
 
 def _num(v, default=None):
     if v is None or str(v).strip()=='': return default
-    return float(v)
+    
+    x=float(v)
+    if not math.isfinite(x): raise ValueError('numeric value must be finite')
+    return x
 
 def import_tables(nodes_csv:str, edges_csv:str, profile='canonical'):
     _profile(profile); issues=[]
@@ -124,7 +141,8 @@ def import_time_series_csv(text:str, profile='canonical'):
     _profile(profile); rows=list(csv.DictReader(io.StringIO(text))); out=[]; issues=[]
     for i,r in enumerate(rows,2):
         try:
-            date=str(r.get('date','')).strip(); target=str(r.get('target_id','')).strip(); kind=str(r.get('kind','')).strip(); value=float(r.get('value')); sigma=float(r.get('sigma',1.0))
+            date=str(r.get('date','')).strip(); target=str(r.get('target_id','')).strip(); kind=str(r.get('kind','')).strip(); value=float(r.get('value')); sigma=float(r.get('sigma',1.0));
+            if not math.isfinite(value) or not math.isfinite(sigma): raise ValueError('value and sigma must be finite')
             if not date or not target or not kind: raise ValueError('date, target_id and kind are required')
             if sigma<=0: raise ValueError('sigma must be > 0')
             out.append({'date':date,'target_id':target,'kind':kind,'value':value,'sigma':sigma})

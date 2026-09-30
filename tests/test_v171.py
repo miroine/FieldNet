@@ -51,6 +51,6 @@ def test_mc_metadata_and_diagnostics_v171():
     n,e=demo_case(); w=next(x for x in n if x['kind']=='well')
     p=UncertainParameter('PI','params.pi_m3d_bar','uniform',.8,1,1.2,target_id=w['id'],physical_min=0)
     r=run_monte_carlo(n,e,DevelopmentScenario('MC','2026-01-01',.03,10),MonteCarloConfig(20,17,'lhs',[p]),forecast_runner=fake_runner)
-    assert r['application']=='FieldNet v29' and r['successful_samples']==20
+    assert r['application']=='FieldNet v29.1' and r['successful_samples']==20
     assert r['percentile_convergence']['cumulative_oil_m3'] and r['sensitivity']['cumulative_oil_m3']
     assert json.loads(export_mc_json(r))['seed']==17

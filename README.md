@@ -2,7 +2,7 @@
 
 v30 is an audit release of v29: corrected well/VLP physics and network kernel, GAP-style well and capacity constraints, canvas/property-panel synchronisation fixes and NaN-safe data editors. See **AUDIT_V30.md** for every finding and fix.
 
-**v30.1:** new graph editor — drag an OUT port onto an IN port to connect (live line), zoom/pan/Fit/Reset handled inside the editor without Streamlit reruns, a single editor→solver contract (`ui/graph_contract.py`) and explicit UNSOLVED / SOLVING / SOLVED / FAILED model states.
+**v30.2:** merges the v29.1 corrective fixes back in (see AUDIT_V30.md). **v30.1:** new graph editor — drag an OUT port onto an IN port to connect (live line), zoom/pan/Fit/Reset handled inside the editor without Streamlit reruns, a single editor→solver contract (`ui/graph_contract.py`) and explicit UNSOLVED / SOLVING / SOLVED / FAILED model states.
 
 # FieldNet v29 — Development Planning
 
@@ -111,3 +111,12 @@ Adds a read-only consolidated model-quality gate across topology, units/referenc
 
 ## v29 Scenario Management
 Immutable content-addressed snapshots, branching/lineage, assumption registers, structural diffs, comparison tables, QA capture, reproducible run manifests, and verified scenario archives. See `SCENARIO_MANAGEMENT_V29.md`.
+
+## v29.1 audit/corrective release
+- Rejects NaN/Inf at interchange and Model Assurance boundaries.
+- Rejects non-finite forecast/solved values in QA.
+- Fixes pipeline roughness calibration to update the solver-consumed field.
+- Clips reliability studies to the exact requested horizon, including the final partial interval.
+- Limits stiff inter-tank communication to conservative pressure equalization / donor storage.
+- Verifies run-manifest hashes and snapshot references on scenario archive import/export.
+- Aligns current release/provenance metadata to FieldNet v29.1.

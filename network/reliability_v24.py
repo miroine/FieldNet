@@ -1,4 +1,4 @@
-"""FieldNet v29 reliability & availability planning layer.
+"""FieldNet v29.1 reliability & availability planning layer.
 Screening-level exponential failure/repair simulation around deterministic production forecasts.
 """
 from __future__ import annotations
@@ -67,26 +67,41 @@ def _group_effective(specs, states, i):
         for s in members: effective[s.target_id]=ok
     return effective
 
+def _simulate_component_durations(spec: ReliabilitySpec, durations, rng):
+    spec.validate(); up=True; remaining=0.0; out=[]; failures=0; elapsed=0.0
+    for dt in durations:
+        planned=_planned_down(spec, elapsed)
+        if planned:
+            out.append(False); elapsed += dt; continue
+        p_fail=1-math.exp(-dt/spec.mtbf_days)
+        if up and rng.random() < p_fail:
+            up=False; failures += 1; remaining=float(rng.exponential(spec.mttr_days))
+        if not up:
+            out.append(False); remaining -= dt
+            if remaining <= 0: up=True
+        else: out.append(True)
+        elapsed += dt
+    return np.asarray(out,dtype=bool), failures
+
 def run_reliability(study: ReliabilityStudy, base_rate_m3d: float=1.0):
-    """Screening reliability simulation. Production proxy scales by critical availability.
-    A caller may replace proxy rates with hydraulic re-solves in a future high-fidelity workflow.
-    """
-    study.validate(); days=max(1,int(round(study.years*365.25))); rng=np.random.default_rng(study.seed)
+    """Screening reliability simulation with exact horizon clipping."""
+    study.validate(); horizon=float(study.years)*365.25; rng=np.random.default_rng(study.seed)
+    durations=[]; elapsed=0.0
+    while elapsed < horizon-1e-12:
+        dt=min(float(study.step_days),horizon-elapsed); durations.append(dt); elapsed += dt
     realiz=[]
     for r in range(study.realizations):
         states={}; failures={}
-        for s in study.specs:
-            states[s.target_id], failures[s.target_id]=simulate_component(s,days,study.step_days,rng)
-        nsteps=min((len(x) for x in states.values()), default=math.ceil(days/study.step_days))
+        for spec in study.specs:
+            states[spec.target_id], failures[spec.target_id]=_simulate_component_durations(spec,durations,rng)
         online=[]
-        for i in range(nsteps):
-            eff=_group_effective(study.specs,states,i)
-            online.append(all(eff.values()) if eff else True)
-        availability=float(np.mean(online)) if online else 1.0
-        realiz.append({'realization':r,'availability':availability,'production_m3':base_rate_m3d*study.step_days*sum(online),'failures':sum(failures.values())})
-    vals=np.array([x['availability'] for x in realiz],float)
-    prod=np.array([x['production_m3'] for x in realiz],float)
-    return {'application':'FieldNet v29','seed':study.seed,'realizations':realiz,'summary':{
+        for i in range(len(durations)):
+            eff=_group_effective(study.specs,states,i); online.append(all(eff.values()) if eff else True)
+        up_days=sum(dt for dt,ok in zip(durations,online) if ok)
+        availability=float(up_days/horizon) if horizon>0 else 1.0
+        realiz.append({'realization':r,'availability':availability,'production_m3':base_rate_m3d*up_days,'failures':sum(failures.values())})
+    vals=np.array([x['availability'] for x in realiz],float); prod=np.array([x['production_m3'] for x in realiz],float)
+    return {'application':'FieldNet v29.1','seed':study.seed,'realizations':realiz,'summary':{
         'mean_availability':float(vals.mean()),'p90_availability':float(np.quantile(vals,.10)),'p50_availability':float(np.quantile(vals,.50)),'p10_availability':float(np.quantile(vals,.90)),
-        'mean_production_m3':float(prod.mean()),'mean_deferred_m3':float(base_rate_m3d*days-prod.mean()),'probability_below_90pct_availability':float(np.mean(vals<.9))},
-        'study':{'years':study.years,'step_days':study.step_days,'realizations':study.realizations,'seed':study.seed,'specs':[asdict(s) for s in study.specs]}}
+        'mean_production_m3':float(prod.mean()),'mean_deferred_m3':float(max(base_rate_m3d*horizon-prod.mean(),0.0)),'probability_below_90pct_availability':float(np.mean(vals<.9))},
+        'study':{'years':study.years,'horizon_days':horizon,'step_days':study.step_days,'realizations':study.realizations,'seed':study.seed,'specs':[asdict(s) for s in study.specs]}}

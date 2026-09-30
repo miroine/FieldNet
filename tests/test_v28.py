@@ -23,4 +23,4 @@ def test_report_gate_review_for_warning_only():
 def test_report_gate_fail_for_error():
  n,e=demo_case(); n[0]['params']['depth_m']=0; r=model_quality_report(n,e); assert r['quality_gate']=='FAIL'
 def test_report_identity_v28():
- n,e=demo_case(); r=model_quality_report(n,e); assert r['application']=='FieldNet v29' and r['schema_version']=='28.0'
+ n,e=demo_case(); r=model_quality_report(n,e); assert r['application']=='FieldNet v29.1' and r['schema_version']=='28.0'

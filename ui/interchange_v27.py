@@ -26,7 +26,7 @@ def render_interchange_v27(st,nodes,edges):
             if st.button('Apply validated import',type='primary',use_container_width=True): st.session_state.nodes,st.session_state.edges,_gi=normalize_graph(r['nodes'],r['edges']); st.session_state.solve=None; st.rerun()
         else: st.error('Import rejected. No project data were changed.')
         if r['issues']: st.dataframe(pd.DataFrame(r['issues']),hide_index=True,use_container_width=True)
-    st.markdown('**Import FieldNet v29 package**')
+    st.markdown('**Import FieldNet v29.1 package**')
     pfile=st.file_uploader('Project package ZIP',type=['zip'],key='v27_package_upload')
     if pfile and st.button('Validate project package',use_container_width=True):
         try: st.session_state.v27_pkg=import_project_package(pfile.getvalue())

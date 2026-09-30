@@ -1,4 +1,4 @@
-"""FieldNet v29 uncertainty and Monte-Carlo validation layer.
+"""FieldNet v29.1 uncertainty and Monte-Carlo validation layer.
 
 Planning-level uncertainty orchestration around deterministic field-development scenarios.
 Sampling never changes hydraulic equations; every realization is explicit and reproducible.
@@ -11,7 +11,7 @@ import numpy as np
 from scipy.stats import norm, spearmanr
 from network.field_development import DevelopmentScenario, run_development_scenario
 
-APPLICATION = "FieldNet v29"
+APPLICATION = "FieldNet v29.1"
 
 @dataclass(frozen=True)
 class UncertainParameter:

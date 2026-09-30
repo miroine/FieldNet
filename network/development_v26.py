@@ -1,4 +1,4 @@
-"""FieldNet v29 development-planning compiler.
+"""FieldNet v29.1 development-planning compiler.
 
 Deterministic project/resource scheduling wrapped around the existing quasi-steady
 field-development forecast.  It is not a drilling simulator or project economics model.
@@ -10,7 +10,7 @@ import copy
 from typing import Any, Iterable
 from network.field_development import DevelopmentEvent, DevelopmentScenario, run_development_scenario
 
-APPLICATION = "FieldNet v29"
+APPLICATION = "FieldNet v29.1"
 RIG_TASKS = {"drill_well", "workover"}
 
 @dataclass(frozen=True)
