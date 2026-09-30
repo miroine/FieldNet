@@ -48,7 +48,8 @@ def well_settings(prm: dict) -> dict:
     depth=max(_f(p,'depth_m',2000.0),1.0)
     return {
         'pr':max(_f(p,'reservoir_pressure_bar',200.0),0.0),
-        'ipr_model':'Vogel' if str(p.get('ipr_model','PI')).lower()=='vogel' else 'PI',
+        'ipr_model':_ipr_name(p.get('ipr_model','PI')),
+        'gas_c':max(_f(p,'gas_c_sm3d_bar2n',50.0),0.0), 'gas_n':min(max(_f(p,'gas_n',1.0),0.5),1.0),
         'pi':pi0*mult, 'qmax':qmax0*mult,
         'depth':depth, 'tubing_id':max(_f(p,'tubing_id_m',0.0762),1e-3),
         'roughness':max(_f(p,'tubing_roughness_m',4.5e-5),0.0),
@@ -64,14 +65,25 @@ def well_settings(prm: dict) -> dict:
                'speed_fraction':max(_f(p,'esp_speed_fraction',1.0),1e-3)} if lift=='esp' else None,
         'lift_assist_bar':max(_f(p,'lift_assist_bar',0.0),0.0),
         'segments':max(int(_f(p,'vlp_segments',DEFAULT_VLP_SEGMENTS)),1),
-        'open':bool(available) and opening>0 and (pi0>0 if str(p.get('ipr_model','PI')).lower()!='vogel' else qmax0>0),
+        'open':bool(available) and opening>0 and {'PI':pi0>0,'Vogel':qmax0>0,'Gas':_f(p,'gas_c_sm3d_bar2n',50.0)>0}[_ipr_name(p.get('ipr_model','PI'))],
         'max_rate':max_rate,
         'max_rate_reported':max_rate,
         'skin':skin,
         # Below this rate a producer cannot sustain stable flow (liquid loading / heading);
         # it is reported as shut in rather than as a numerically fragile trickle.
-        'min_rate':max(_f(p,'min_rate_m3d',5.0),0.0),
+        'min_rate':max(_f(p,'min_rate_m3d',0.01 if _ipr_name(p.get('ipr_model','PI'))=='Gas' else 5.0),0.0),
     }
+
+
+def _ipr_name(x):
+    x=str(x or 'PI').lower()
+    if x.startswith('vogel'): return 'Vogel'
+    if x.startswith('gas'): return 'Gas'
+    return 'PI'
+
+
+def _gas_per_liquid(s):
+    return max(s['gor']*(1-s['water_cut']),1e-6)
 
 
 def ipr_rate(pwf, s):
@@ -80,6 +92,9 @@ def ipr_rate(pwf, s):
     if pr<=0: return 0.0
     if s['ipr_model']=='Vogel':
         x=min(max(pwf/pr,0.0),1.0); return max(0.0,s['qmax']*(1-0.2*x-0.8*x*x))
+    if s['ipr_model']=='Gas':
+        d=pr*pr-max(pwf,0.0)**2
+        return 0.0 if d<=0 else s['gas_c']*d**s['gas_n']/_gas_per_liquid(s)
     return max(0.0,s['pi']*(pr-pwf))
 
 
@@ -92,6 +107,12 @@ def ipr_pwf(q, s):
         if y<=0: return pr - y*pr/1.8      # dpwf/dq at q=0 is -pr/(1.8 qmax)
         if y>=1: return -(y-1.0)*pr/0.2    # dpwf/dq at AOF is -pr/(0.2 qmax)
         return pr*(-0.2+math.sqrt(3.24-3.2*y))/1.6
+    if s['ipr_model']=='Gas':
+        # Backpressure deliverability q_g = C (pr^2 - pwf^2)^n, expressed per m3/d of liquid.
+        qg=q*_gas_per_liquid(s); c=max(s['gas_c'],1e-12)
+        if qg<=0: return pr - qg/c/max(pr,1.0)   # smooth extension below zero rate
+        v=pr*pr-(qg/c)**(1.0/s['gas_n'])
+        return math.sqrt(v) if v>=0 else -math.sqrt(-v)
     return pr - q/max(s['pi'],1e-9)
 
 
@@ -119,6 +140,7 @@ def excess_bar(q, whp, s):
 
 
 def rate_capacity(s):
+    if s['ipr_model']=='Gas': return s['gas_c']*(s['pr']**2)**s['gas_n']/_gas_per_liquid(s)
     return s['pi']*s['pr'] if s['ipr_model']=='PI' else s['qmax']
 
 

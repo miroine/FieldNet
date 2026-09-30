@@ -37,6 +37,7 @@ svg#edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z
 .edge:hover{stroke:#b9c9ff;stroke-width:3}.edge.sel{stroke:#ffcc66;stroke-width:4}
 .edge.zero{stroke-dasharray:5 4;opacity:.7}
 .hit{stroke:transparent;stroke-width:12;fill:none;pointer-events:stroke;cursor:pointer}
+.drain{stroke:#a1887f;stroke-width:2;fill:none;stroke-dasharray:3 5;pointer-events:stroke;cursor:pointer}.drain.sel{stroke:#ffcc66;stroke-width:3.5}
 .live{stroke:#ffcc66;stroke-width:2.5;fill:none;stroke-dasharray:6 4;pointer-events:none}
 .edgeText{fill:#d8dee9;font-size:10px;font-weight:500;pointer-events:none;paint-order:stroke;stroke:#0e1117;stroke-width:3px}
 .status{position:absolute;left:10px;bottom:10px;background:#151b24ee;border:1px solid #394453;border-radius:6px;padding:5px 8px;z-index:5;max-width:70%;pointer-events:none}
@@ -52,7 +53,7 @@ svg#edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z
   <button id="fit" title="Fit network in view">Fit</button><button id="reset" title="Reset view (100%, origin)">Reset</button>
 </div>
 <div class="wrap"><div class="palette"><b>Add equipment</b><div id="pal"></div>
-<div class="hint">Drag from a component's <b>OUT</b> port (right) and drop on another component's <b>IN</b> port (left) to connect.<br><br>Drag empty space to pan · wheel to zoom.<br>Pan and zoom stay in the editor and never trigger a rerun.</div></div>
+<div class="hint">Drag from a component's <b>OUT</b> port (right) and drop on another component's <b>IN</b> port (left) to connect.<br><br>Drag a <b>Reservoir tank</b> onto a well or injector to assign the tank it drains (dashed line).<br><br>Drag empty space to pan · wheel to zoom.<br>Pan and zoom stay in the editor and never trigger a rerun.</div></div>
 <div id="vp"><canvas id="grid"></canvas><div id="world"><svg id="edges"></svg></div><div id="status" class="status">Ready</div><div id="msg" class="msg" style="display:none"></div></div></div>
 <script>
 const SCHEMA='fieldnet.graph/1';
@@ -99,7 +100,9 @@ function defaults(k,x,y){const n={id:uid(),kind:k,name:k.toUpperCase()+'-'+(stat
  if(k==='water_injector')n.params={injection_fluid:'water',injectivity_m3d_bar:10,reservoir_pressure_bar:200,depth_m:2000,available:true};return n}
 function edgeDefault(a,b){return {id:uid(),source:a,target:b,kind:'pipeline',length_m:1000,diameter_m:.154,roughness_m:4.5e-5,elevation_change_m:0,params:{temperature_c:50,water_cut:.2,gor_sm3sm3:100,api:35,gas_sg:.75,initial_rate_m3d:500,correlation:'Beggs-Brill',cv:80,shutoff_head_bar:35,rated_rate_m3d:1500,efficiency:.75,pressure_ratio:1.8,max_discharge_bar:250,opening:1,speed_fraction:1,map_enabled:false,rated_gas_rate_sm3d:150000}}}
 function nodeById(id){return state.nodes.find(n=>n.id===id)}
-function connectionProblem(a,b){if(!a||!b)return 'Drop on a component';if(a===b)return 'Cannot connect a component to itself';if(state.edges.some(e=>e.source===a&&e.target===b))return 'Already connected';return null}
+const DRAINABLE=['well','water_injector','gas_injector','injector'];
+function isDrain(a,b){const A=nodeById(a),B=nodeById(b);return A&&B&&A.kind==='reservoir'&&DRAINABLE.includes(B.kind)}
+function connectionProblem(a,b){if(!a||!b)return 'Drop on a component';if(a===b)return 'Cannot connect a component to itself';if(isDrain(a,b))return (nodeById(b).params||{}).reservoir_id===a?'Already drains this tank':null;if(state.edges.some(e=>e.source===a&&e.target===b))return 'Already connected';return null}
 TYPES.forEach(([k,label])=>{const b=document.createElement('button');b.textContent='+ '+label;b.onclick=()=>{const r=vp.getBoundingClientRect();const c=toWorld(r.left+r.width/2,r.top+r.height/2);const off=(state.nodes.length%5)*18;checkpoint();const n=defaults(k,Math.round(c.x-NODE_W/2+off),Math.round(c.y-37+off));state.nodes.push(n);selected=n.id;render();send();say('Added '+n.name)};document.getElementById('pal').appendChild(b)});
 
 /* ---------- rendering ---------- */
@@ -109,8 +112,9 @@ function render(){
  world.querySelectorAll('.node').forEach(x=>x.remove());for(const k in els)delete els[k];
  state.nodes.forEach((n,i)=>{if(!isFinite(+n.x)||!isFinite(+n.y)){n.x=60+(i%4)*200;n.y=60+Math.floor(i/4)*120}
   const e=document.createElement('div');e.className='node'+(selected===n.id?' sel':'');e.style.left=(+n.x)+'px';e.style.top=(+n.y)+'px';e.dataset.id=n.id;
-  const pv=state.p[n.id];const res=(solvedView()&&pv!=null)?Number(pv).toFixed(1)+' bar':'unsolved';
-  e.innerHTML=`<span class="stripe" style="background:${COLORS[n.kind]||'#9aa5b1'}"></span><div class=kind>${n.kind.replace('_',' ')}</div><div class=nm title="${n.name}">${n.name}</div><span class="port pin" data-port="in" title="IN — drop a connection here"></span><span class="port pout" data-port="out" title="OUT — drag to another component's IN port"></span><div class="result ${res==='unsolved'?'stale':''}">${res}</div>`;
+  const pv=state.p[n.id];let res=(solvedView()&&pv!=null)?Number(pv).toFixed(1)+' bar':'unsolved';
+  if(n.kind==='reservoir'){const pp=n.params||{};const ph={oil:'oil',gas:'gas',gas_condensate:'condensate'}[pp.fluid_phase||'oil']||'oil';const inpl=ph==='oil'?((+pp.stoiip_sm3||0)/1e6).toFixed(1)+' MSm³':((+pp.giip_sm3||0)/1e9).toFixed(2)+' GSm³';res=ph+' · '+inpl+' · '+Math.round(+pp.reservoir_pressure_bar||0)+' bar'}
+  e.innerHTML=`<span class="stripe" style="background:${COLORS[n.kind]||'#9aa5b1'}"></span><div class=kind>${n.kind.replace('_',' ')}</div><div class=nm title="${n.name}">${n.name}</div><span class="port pin" data-port="in" title="IN — drop a connection here"></span><span class="port pout" data-port="out" title="OUT — drag to another component's IN port"></span><div class="result ${res==='unsolved'?'stale':''}" style="${n.kind==='reservoir'?'color:#d7b8a8':''}">${res}</div>`;
   world.appendChild(e);els[n.id]=e});
  draw();tools();
 }
@@ -118,6 +122,9 @@ function portPos(id,which){const n=nodeById(id),e=els[id];if(!n)return null;cons
 function curve(a,b){const dx=Math.max(45,Math.abs(b.x-a.x)/2);return `M${a.x},${a.y} C${a.x+dx},${a.y} ${b.x-dx},${b.y} ${b.x},${b.y}`}
 function draw(){
  svg.innerHTML='<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8ca9ff"/></marker></defs>';
+ state.nodes.forEach(w=>{const rid=(w.params||{}).reservoir_id;if(!rid||!nodeById(rid))return;const a=portPos(rid,'out'),b=portPos(w.id,'in');if(!a||!b)return;const d=curve(a,b);
+  const hit=document.createElementNS(SVGNS,'path');hit.setAttribute('d',d);hit.setAttribute('class','hit');hit.dataset.edge='drain:'+w.id;svg.appendChild(hit);
+  const pth=document.createElementNS(SVGNS,'path');pth.setAttribute('d',d);pth.setAttribute('class','drain'+(selected==='drain:'+w.id?' sel':''));pth.dataset.edge='drain:'+w.id;svg.appendChild(pth)});
  state.edges.forEach(ed=>{const a=portPos(ed.source,'out'),b=portPos(ed.target,'in');if(!a||!b)return;const d=curve(a,b);
   const hit=document.createElementNS(SVGNS,'path');hit.setAttribute('d',d);hit.setAttribute('class','hit');hit.dataset.edge=ed.id;svg.appendChild(hit);
   const q=state.q[ed.id];const p=document.createElementNS(SVGNS,'path');p.setAttribute('d',d);p.setAttribute('class','edge'+(selected===ed.id?' sel':'')+(solvedView()&&q!=null&&Math.abs(q)<1e-6?' zero':''));p.setAttribute('marker-end','url(#arr)');p.dataset.edge=ed.id;svg.appendChild(p);
@@ -144,29 +151,31 @@ vp.addEventListener('pointermove',ev=>{
  if(mode.type==='drag'){const dx=(ev.clientX-mode.sx)/view.k,dy=(ev.clientY-mode.sy)/view.k;if(!mode.moved&&Math.abs(dx)+Math.abs(dy)<3/view.k)return;if(!mode.moved){mode.moved=true;undo.push(mode.snap);if(undo.length>60)undo.shift();redo=[]}
   const n=nodeById(mode.id);n.x=Math.round(mode.ox+dx);n.y=Math.round(mode.oy+dy);els[n.id].style.left=n.x+'px';els[n.id].style.top=n.y+'px';draw();return}
  if(mode.type==='connect'){mode.cur=toWorld(ev.clientX,ev.clientY);clearTargets();const tid=nodeUnder(ev.clientX,ev.clientY);mode.target=tid;
-  if(tid&&tid!==mode.from){const prob=connectionProblem(mode.from,tid);const pin=els[tid]&&els[tid].querySelector('.pin');if(pin){pin.classList.add(prob?'bad':'target');const p=portPos(tid,'in');if(!prob)mode.cur=p}say(prob||('Release to connect to '+nodeById(tid).name))}else say('Drop on the target IN port');draw()}
+  if(tid&&tid!==mode.from){const prob=connectionProblem(mode.from,tid);const pin=els[tid]&&els[tid].querySelector('.pin');if(pin){pin.classList.add(prob?'bad':'target');const p=portPos(tid,'in');if(!prob)mode.cur=p}say(prob||(isDrain(mode.from,tid)?('Release: '+nodeById(tid).name+' drains this tank'):('Release to connect to '+nodeById(tid).name)))}else say('Drop on the target IN port');draw()}
 });
 function endPointer(ev){
  if(!mode)return;const m=mode;mode=null;vp.classList.remove('panning','connecting');clearTargets();
  if(m.type==='pan'){if(!m.moved&&selected){selected=null;render();send()}}
  else if(m.type==='drag'){if(m.moved){send();say('Moved')}else{selected=m.id;render();send()}}
  else if(m.type==='connect'){const tid=nodeUnder(ev.clientX,ev.clientY)||m.target;const prob=connectionProblem(m.from,tid);
-  if(!prob){checkpoint();const e=edgeDefault(m.from,tid);state.edges.push(e);selected=e.id;render();send();say('Connected '+nodeById(m.from).name+' → '+nodeById(tid).name)}else{draw();say(tid&&tid!==m.from?prob:'Connection cancelled')}}
- if(pending){const a=pending;pending=null;applyArgs(a)}
+  if(!prob&&isDrain(m.from,tid)){checkpoint();const w=nodeById(tid);w.params=w.params||{};w.params.reservoir_id=m.from;selected=tid;render();send();say(w.name+' now drains '+nodeById(m.from).name)}
+  else if(!prob){checkpoint();const e=edgeDefault(m.from,tid);state.edges.push(e);selected=e.id;render();send();say('Connected '+nodeById(m.from).name+' → '+nodeById(tid).name)}else{draw();say(tid&&tid!==m.from?prob:'Connection cancelled')}}
+ flushPending()
 }
+function flushPending(){if(pending){const a=pending;pending=null;applyArgs(a)}}
 vp.addEventListener('pointerup',endPointer);vp.addEventListener('pointercancel',endPointer);
 
 /* ---------- toolbar edits (these change the graph and are sent) ---------- */
-function deleteSelection(){if(!selected)return;checkpoint();if(nodeById(selected)){state.nodes=state.nodes.filter(n=>n.id!==selected);state.edges=state.edges.filter(e=>e.source!==selected&&e.target!==selected)}else state.edges=state.edges.filter(e=>e.id!==selected);selected=null;render();send();say('Deleted')}
+function deleteSelection(){if(!selected)return;checkpoint();if(String(selected).startsWith('drain:')){const w=nodeById(selected.slice(6));if(w&&w.params)delete w.params.reservoir_id;selected=null;render();send();say('Drainage link removed');return}if(nodeById(selected)){state.nodes=state.nodes.filter(n=>n.id!==selected);state.edges=state.edges.filter(e=>e.source!==selected&&e.target!==selected)}else state.edges=state.edges.filter(e=>e.id!==selected);selected=null;render();send();say('Deleted')}
 document.getElementById('del').onclick=deleteSelection;
 document.getElementById('copy').onclick=()=>{const n=nodeById(selected);if(!n)return;checkpoint();const z=JSON.parse(JSON.stringify(n));z.id=uid();z.name+=' COPY';z.x=(+z.x||0)+35;z.y=(+z.y||0)+35;state.nodes.push(z);selected=z.id;render();send()};
 document.getElementById('undo').onclick=()=>{if(!undo.length)return;redo.push(snap());restore(undo.pop())};
 document.getElementById('redo').onclick=()=>{if(!redo.length)return;undo.push(snap());restore(redo.pop())};
 document.getElementById('layout').onclick=()=>{checkpoint();const indeg={},adj={};state.nodes.forEach(n=>{indeg[n.id]=0;adj[n.id]=[]});state.edges.forEach(e=>{if(e.target in indeg&&e.source in adj){indeg[e.target]++;adj[e.source].push(e.target)}});const lvl={};const q=state.nodes.filter(n=>!indeg[n.id]).map(n=>n.id);q.forEach(i=>lvl[i]=0);while(q.length){const u=q.shift();adj[u].forEach(v=>{lvl[v]=Math.max(lvl[v]||0,lvl[u]+1);if(--indeg[v]===0)q.push(v)})}const cnt={};state.nodes.forEach(n=>{const l=lvl[n.id]||0;cnt[l]=(cnt[l]||0);n.x=40+l*240;n.y=40+cnt[l]*120;cnt[l]++});render();fit();send()};
-window.addEventListener('keydown',ev=>{if((ev.key==='Delete'||ev.key==='Backspace')&&selected){ev.preventDefault();deleteSelection()}else if(ev.key==='Escape'&&mode&&mode.type==='connect'){mode=null;vp.classList.remove('connecting');clearTargets();draw();say('Connection cancelled')}else if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'){document.getElementById('undo').click()}else if((ev.ctrlKey||ev.metaKey)&&ev.key==='y'){document.getElementById('redo').click()}});
+window.addEventListener('keydown',ev=>{if((ev.key==='Delete'||ev.key==='Backspace')&&selected){ev.preventDefault();deleteSelection()}else if(ev.key==='Escape'&&mode&&mode.type==='connect'){mode=null;vp.classList.remove('connecting');clearTargets();draw();say('Connection cancelled');flushPending()}else if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'){document.getElementById('undo').click()}else if((ev.ctrlKey||ev.metaKey)&&ev.key==='y'){document.getElementById('redo').click()}});
 
 /* ---------- args from Python (graph + solve state) ---------- */
-function applyArgs(a){state.nodes=JSON.parse(JSON.stringify(a.nodes||[]));state.edges=JSON.parse(JSON.stringify(a.edges||[]));state.p=a.pressures||{};state.q=a.rates||{};
+function applyArgs(a){pending=null;state.nodes=JSON.parse(JSON.stringify(a.nodes||[]));state.edges=JSON.parse(JSON.stringify(a.edges||[]));state.p=a.pressures||{};state.q=a.rates||{};
  if(a.selected!==undefined&&a.selected!==null)selected=a.selected;if(selected&&!nodeById(selected)&&!state.edges.some(e=>e.id===selected))selected=null;
  setStatus(a.status,a.status_message);render();if(firstRender){firstRender=false;fit()}}
 window.addEventListener('message',ev=>{const d=ev.data;if(!d||d.type!=='streamlit:render')return;const a=d.args||{};frame(a.height||860);document.querySelector('.wrap').style.height=((a.height||860)-48)+'px';applyView();

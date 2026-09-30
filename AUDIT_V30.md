@@ -103,3 +103,45 @@ Audit of FieldNet v29 (Streamlit GAP-style production network solver). All findi
   - Canvas reservoir tanks seed the Reservoir-coupling tab.
 - **Solver:** networks with only one or two unknowns (e.g. reservoir tank → sink) crashed in SciPy's sparse Jacobian path; they now use a dense Jacobian.
 - **Tests:** 244/244 pass (232 v30.1 + 12 v29.1). The browser editor test passes 20/20.
+
+
+## v31 — Reservoir tanks, production prognosis and a reorganised app
+
+**Why Life-of-field showed zero.** A reservoir tank connected to wells with *pipelines* acted as a 250-bar pipe source. The wellheads were pushed to about 250 bar, every well died, and the forecast (which sums well rates) reported 0. Tanks now **feed** wells by assignment, not by pipes:
+- Drag a tank onto a well or injector in the editor. It is drawn as a dashed "drains" line.
+- Existing tank→well pipes are converted automatically, with a notice.
+
+**Reservoir tanks: in-place volume + fluid phase** (`network/reservoir_mb.py`)
+- Oil: STOIIP, Bo, Rsi, bubble point, Swi, compressibility.
+  - Undersaturated depletion above the bubble point, and the extra expansion of liberated gas (solution-gas drive) below it.
+  - Water cut rises with recovery factor (breakthrough, S-curve); GOR rises below the bubble point.
+- Dry gas and gas condensate: GIIP, gas gravity, CGR, with p/z material balance.
+  - Wells on gas tanks automatically use a **gas backpressure IPR** and no-slip tubing. Beggs–Brill over-predicts holdup at gas-well liquid fractions.
+- Optional steady-state aquifer. Water injectors assigned to a tank support its pressure (voidage replacement).
+- The tank pressure is applied to linked wells in *every* solver path: network solve, nodal, calibration, optimisation, sensitivity and forecasts.
+
+**Production forecast**
+- Depletion is sub-stepped automatically, so large report steps cannot overshoot.
+- Reported rates are averages over each step.
+- KPIs: peak, plateau, cumulative, recovery factor, final water cut.
+- Charts: liquid rates, gas rate, cumulative oil, tank pressure, water cut, GOR, and oil rate by well.
+
+**Development schedule** (previously empty and unusable): pre-filled from the network with drilling order, rigs, durations and "not before" dates. It produces a Gantt chart, first-oil date, KPIs and a comparison with all wells on stream at start.
+
+**Scenarios & well count** (replaces the old v16 tab)
+- Scenario table: wells, in-place ×, PI ×, separator pressure, capacity, injection on/off.
+- Outputs: KPI comparison and overlaid profiles.
+- The well-count study gives a concrete recommended number of producers, using a marginal-oil rule.
+
+**Constraints bulk editor**: one table for separator/export capacities, well rate caps, minimum BHP, minimum/maximum pressures and connection maximum rates. Always available, even before a solve.
+
+**App layout**: seven workflow groups — Network · Wells & reservoirs · Network results · Forecast & development · Optimization · Uncertainty & risk · Data & QA. Version tags were removed from titles.
+- Consistent chart styling: oil, gas and water colours from a colour-blind-validated palette, and different units never share an axis.
+- New realistic demo field: oil tank with aquifer, three producers (one on gas lift), water injection and a separator capacity limit.
+
+**Fixes found while testing**
+- Solve status fell back to UNSOLVED for models with tanks, because the result fingerprint was taken after tank linking.
+- The editor could re-apply a stale deferred update after Esc cancelled a drag.
+- Solver: dogbox least squares. Warm-started solves need about 5 iterations instead of about 34, so forecasts run about 7× faster.
+
+**Tests**: 258 Python tests pass (14 new in `tests/test_v31_prognosis.py`). The browser editor test passes 25/25.

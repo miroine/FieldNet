@@ -71,6 +71,8 @@ def _initial_pressures(nodes, links, byid):
 
 
 def solve_network(nodes, edges, *, x_scale="jac", max_nfev=3000, initial_guess=None, reseed_attempts=2):
+    from network.reservoir_mb import ensure_tank_links
+    nodes=ensure_tank_links(nodes)
     # Unconnected components have no equations that can determine them; leave them out.
     linked={x for e in links_of(edges) for x in (e.get('source'),e.get('target'))}
     nodes=[n for n in nodes if n.get('id') in linked]
@@ -178,7 +180,7 @@ def solve_network(nodes, edges, *, x_scale="jac", max_nfev=3000, initial_guess=N
         for c in cols: sparsity[r_i,c]=1
 
     def _run(xs, nfev):
-        return least_squares(residual,xs,max_nfev=int(nfev),xtol=1e-12,ftol=1e-12,gtol=1e-12,bounds=(lo,hi),x_scale=x_scale,jac_sparsity=sparsity if nvar>2 else None)
+        return least_squares(residual,xs,method='dogbox',max_nfev=int(nfev),xtol=1e-12,ftol=1e-12,gtol=1e-12,bounds=(lo,hi),x_scale=x_scale,jac_sparsity=sparsity if nvar>2 else None)
     def _clip(v): return np.minimum(np.maximum(v,lo+1e-9*(np.abs(lo)+1)),hi-1e-9*(np.abs(hi)+1))
     budget=int(min(max_nfev,400+60*nvar))
     # Short first pass: if it stalls, re-seeding the wells on their stable branch (below) is

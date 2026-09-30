@@ -61,9 +61,16 @@ def normalize_graph(nodes, edges):
         try: n['x'] = float(n.get('x') or 0.0); n['y'] = float(n.get('y') or 0.0)
         except (TypeError, ValueError): n['x'] = n['y'] = 0.0
         out_nodes.append(n)
-    out_edges = []; pairs = set(); eids = set()
+    out_edges = []; pairs = set(); eids = set(); kind = {n['id']: n.get('kind') for n in out_nodes}
     for e in edges:
         s, t = e.get('source'), e.get('target')
+        # A reservoir tank *feeds* wells/injectors; it is not a pipe. Wiring tank -> well with a
+        # pipeline made the tank a 250-bar pipe source, killed every well and gave zero forecasts.
+        pair = {kind.get(s), kind.get(t)}
+        if 'reservoir' in pair and pair & {'well', 'water_injector', 'gas_injector', 'injector'}:
+            tank, other = (s, t) if kind.get(s) == 'reservoir' else (t, s)
+            nd = next(n for n in out_nodes if n['id'] == other); nd['params']['reservoir_id'] = tank
+            issues.append(f"Connection {e.get('id')} between reservoir tank and {nd.get('name', other)} converted to a drainage assignment (tanks feed wells; they are not pipes)."); continue
         if s not in seen or t not in seen: issues.append(f"Dropped connection {e.get('id')} with a missing endpoint"); continue
         if s == t: issues.append(f"Dropped self-loop {e.get('id')}"); continue
         if (s, t) in pairs and e.get('kind', 'pipeline') == 'pipeline' and not (e.get('params') or {}).get('allow_parallel'):
@@ -111,8 +118,10 @@ def accept_canvas_payload(state, payload):
 
 
 def solver_input(nodes, edges):
-    """Isolated copy of the current graph for the solver - the only form the solver receives."""
-    return copy.deepcopy(to_builtin(nodes)), copy.deepcopy(to_builtin(edges))
+    """Isolated copy of the current graph for the solver - the only form the solver receives.
+    Wells/injectors assigned to a reservoir tank take the tank's pressure (and gas-tank fluid)."""
+    from network.reservoir_mb import apply_tank_links
+    return apply_tank_links(copy.deepcopy(to_builtin(nodes))), copy.deepcopy(to_builtin(edges))
 
 
 def solve_status(state):
@@ -135,8 +144,8 @@ def current_results(state):
 
 def run_solve(state, solver, **kwargs):
     """Solve the current graph and store the result tagged with its graph hash."""
+    h = graph_hash(state.get('nodes', []), state.get('edges', []))  # fingerprint the model, not the tank-linked solver copy
     nodes, edges = solver_input(state.get('nodes', []), state.get('edges', []))
-    h = graph_hash(nodes, edges)
     try:
         p, q, info, d = solver(nodes, edges, **kwargs)
     except Exception as exc:  # never leave the UI stuck in SOLVING

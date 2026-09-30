@@ -1,8 +1,8 @@
-# FieldNet v30 — Integrated Production Network (audit & bug-fix release)
+# FieldNet v31 — Production Network & Prognosis
 
 v30 is an audit release of v29: corrected well/VLP physics and network kernel, GAP-style well and capacity constraints, canvas/property-panel synchronisation fixes and NaN-safe data editors. See **AUDIT_V30.md** for every finding and fix.
 
-**v30.2:** merges the v29.1 corrective fixes back in (see AUDIT_V30.md). **v30.1:** new graph editor — drag an OUT port onto an IN port to connect (live line), zoom/pan/Fit/Reset handled inside the editor without Streamlit reruns, a single editor→solver contract (`ui/graph_contract.py`) and explicit UNSOLVED / SOLVING / SOLVED / FAILED model states.
+**v31:** reservoir tanks with in-place volume and fluid phase, working production forecast, development schedule, scenarios and well-count study, constraints bulk editor, reorganised app. **v30.2:** merges the v29.1 corrective fixes back in (see AUDIT_V30.md). **v30.1:** new graph editor — drag an OUT port onto an IN port to connect (live line), zoom/pan/Fit/Reset handled inside the editor without Streamlit reruns, a single editor→solver contract (`ui/graph_contract.py`) and explicit UNSOLVED / SOLVING / SOLVED / FAILED model states.
 
 # FieldNet v29 — Development Planning
 

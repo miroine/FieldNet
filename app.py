@@ -24,8 +24,12 @@ from network.planning import run_scenarios, uncertainty_cases
 from ui.theme import THEMES, apply_theme
 from solver.diagnostics import solver_diagnostics
 from physics.well_model import well_settings
-from ui.field_development import render_field_development
-from ui.development_v26 import render_development_v26
+from ui.forecast_view import render_forecast
+from ui.development_view import render_schedule, render_scenarios
+from ui.constraints_view import render_constraint_editor
+from ui import charts
+from network.reservoir_mb import apply_tank_links, tank_summary, TANK_DEFAULTS
+from network.examples import demo_field_case
 from ui.interchange_v27 import render_interchange_v27
 from ui.scenario_v29 import render_scenario_v29
 from solver.model_assurance_v28 import model_quality_report
@@ -40,7 +44,7 @@ from network.coupled_forecast_v25 import run_coupled_forecast_v25
 BOUNDARY_KINDS=('sink','separator','separator_stage','oil_export','gas_export','water_disposal','water_source','gas_source')
 LINK_TYPES=['pipeline','choke','control_valve','pump','compressor']
 
-st.set_page_config(page_title='FieldNet v30.2',page_icon='⛽',layout='wide')
+st.set_page_config(page_title='FieldNet v31',page_icon='⛽',layout='wide')
 if 'theme_name' not in st.session_state: st.session_state.theme_name='Equinor-inspired Light'
 if 'unit_profile' not in st.session_state: st.session_state.unit_profile='norwegian_si'
 with st.sidebar:
@@ -51,9 +55,9 @@ with st.sidebar:
     with st.expander('Unit reference conditions'):
         st.write(f"Standard volumes: {STANDARD_CONDITIONS['standard_temperature_c']:.0f} °C and {STANDARD_CONDITIONS['standard_pressure_bara']:.5f} bara. Pressure-dependent PVT uses absolute pressure.")
 apply_theme(st,st.session_state.theme_name)
-st.markdown("<div class='fieldnet-brand'><h2>FieldNet v30.2 — Integrated Production Network</h2><p>Made by Merouane Hamdani · For non-commercial use · Independent engineering prototype</p></div>",unsafe_allow_html=True)
+st.markdown("<div class='fieldnet-brand'><h2>FieldNet v31 — Production Network &amp; Prognosis</h2><p>Made by Merouane Hamdani · For non-commercial use · Independent engineering prototype</p></div>",unsafe_allow_html=True)
 st.caption('Equinor-inspired themes are unofficial and are not affiliated with, endorsed by, or sponsored by Equinor ASA. Validate engineering correlations before operational use.')
-if 'nodes' not in st.session_state: st.session_state.nodes,st.session_state.edges=demo_case()
+if 'nodes' not in st.session_state: st.session_state.nodes,st.session_state.edges=demo_field_case()
 if 'solve' not in st.session_state: st.session_state.solve=None
 if 'layout_checked' not in st.session_state:
     # Demo/imported cases often have every node at (0,0); lay them out once so the editor is usable.
@@ -109,9 +113,16 @@ with st.sidebar:
         n_existing=len(st.session_state.nodes)
         st.session_state.nodes.append({'id':nid,'kind':kind,'name':name,'pressure_bar':pressure,'x':60+(n_existing%4)*200,'y':60+(n_existing//4)*120,'params':prm}); st.rerun()
     st.caption('Connect components in the editor: drag from an OUT port onto another component’s IN port.')
-    if st.button('Reset demo',use_container_width=True): st.session_state.nodes,st.session_state.edges=demo_case(); st.session_state.nodes=auto_layout(st.session_state.nodes,st.session_state.edges); reset_solve(); st.rerun()
+    if st.button('Load demo field',use_container_width=True): st.session_state.nodes,st.session_state.edges=demo_field_case(); reset_solve(); [st.session_state.pop(k,None) for k in ('forecast','sched_result','scn_results','wc_result')]; st.rerun()
 
-tab_net,tab_nodal,tab_diag,tab_fa,tab_results,tab_constraints,tab_ops,tab_cal,tab_forecast,tab_development,tab_dev26,tab_uncertainty,tab_rel,tab_res25,tab_io27,tab_qa28,tab_scen29=st.tabs(['Network','Nodal analysis','Hydraulic profiles','Flow assurance','Results','Constraints & equipment','Optimization & sensitivity','Calibration','Life-of-field','Field Development','Development Planning','Uncertainty','Reliability','Reservoir coupling','Data & interoperability','Model assurance','Scenarios'])
+G=st.tabs(['🗺️ Network','🛢️ Wells & reservoirs','📊 Network results','📈 Forecast & development','⚙️ Optimization','🎲 Uncertainty & risk','🗂️ Data & QA'])
+tab_net=G[0]
+with G[1]: tab_nodal,tab_tanks=st.tabs(['Nodal analysis','Reservoir tanks'])
+with G[2]: tab_results,tab_constraints,tab_diag,tab_fa=st.tabs(['Summary','Constraints & equipment','Hydraulic profiles','Flow assurance'])
+with G[3]: tab_forecast,tab_dev26,tab_development,tab_res25=st.tabs(['Production forecast','Development schedule','Scenarios & well count','Multi-tank coupling (advanced)'])
+with G[4]: tab_ops,tab_cal=st.tabs(['Optimization & sensitivity','Calibration'])
+with G[5]: tab_uncertainty,tab_rel=st.tabs(['Monte Carlo','Reliability'])
+with G[6]: tab_qa28,tab_io27,tab_scen29=st.tabs(['Model assurance','Import / export','Snapshots'])
 with tab_net:
     canvas,props=st.columns([3.2,1])
     with canvas:
@@ -193,21 +204,61 @@ with tab_net:
                     if cap>0: p['max_liquid_rate_m3d']=cap
                     else: p.pop('max_liquid_rate_m3d',None)
             if n['kind']=='reservoir':
-                p['reservoir_pressure_bar']=unit_input(f"Tank pressure [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),250.0)),pressure_to_display,pressure_from_display,'rpr'+sid,1.0,1500.0)
-                p['pore_volume_m3']=synced_number(st,'Tank pore volume [m³]',float(clean_num(p.get('pore_volume_m3'),2e6)),'rpv'+sid,1.0,1e12)
-                p['total_compressibility_1bar']=synced_number(st,'Total compressibility [1/bar]',float(clean_num(p.get('total_compressibility_1bar'),8e-5)),'rct'+sid,1e-7,1e-2,fmt='%.2e')
-                p['min_pressure_bar']=unit_input(f"Minimum tank pressure [{ul['pressure']}]",float(clean_num(p.get('min_pressure_bar'),20.0)),pressure_to_display,pressure_from_display,'rmp'+sid,0.0,1500.0)
-                st.caption('A reservoir tank is a fixed-pressure boundary for the network solve and seeds the Reservoir-coupling tab.')
+                PH={'oil':'Oil (black oil)','gas':'Dry gas','gas_condensate':'Gas condensate'}
+                p['fluid_phase']=synced_select(st,'Fluid phase',list(PH),p.get('fluid_phase','oil') if p.get('fluid_phase') in PH else 'oil','rph'+sid,format_func=PH.get)
+                if p['fluid_phase']=='oil':
+                    v=synced_number(st,'STOIIP — oil in place [MSm³]',float(clean_num(p.get('stoiip_sm3'),TANK_DEFAULTS['stoiip_sm3']))/1e6,'rst'+sid,0.001,1e6,fmt='%.3f'); p['stoiip_sm3']=v*1e6
+                else:
+                    v=synced_number(st,'GIIP — gas in place [GSm³]',float(clean_num(p.get('giip_sm3'),TANK_DEFAULTS['giip_sm3']))/1e9,'rgi'+sid,0.0001,1e5,fmt='%.4f'); p['giip_sm3']=v*1e9
+                p['reservoir_pressure_bar']=unit_input(f"Initial pressure [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),250.0)),pressure_to_display,pressure_from_display,'rpr'+sid,1.0,1500.0)
+                p['temperature_c']=unit_input(f"Reservoir temperature [{ul['temperature']}]",float(clean_num(p.get('temperature_c'),90.0)),temperature_to_display,temperature_from_display,'rtc'+sid,0.,250.)
+                with st.expander('Fluid & rock properties'):
+                    if p['fluid_phase']=='oil':
+                        p['boi_rm3_sm3']=synced_number(st,'Initial Bo [rm³/Sm³]',float(clean_num(p.get('boi_rm3_sm3'),1.25)),'rbo'+sid,1.0,3.0)
+                        p['rsi_sm3_sm3']=synced_number(st,'Initial solution GOR Rsi [Sm³/Sm³]',float(clean_num(p.get('rsi_sm3_sm3'),100.0)),'rrs'+sid,0.0,2000.0)
+                        p['bubble_point_bar']=unit_input(f"Bubble-point pressure [{ul['pressure']}]",float(clean_num(p.get('bubble_point_bar'),150.0)),pressure_to_display,pressure_from_display,'rpb'+sid,1.,1500.)
+                        p['ct_1bar']=synced_number(st,'Total compressibility above Pb [1/bar]',float(clean_num(p.get('ct_1bar'),1.5e-4)),'rct'+sid,1e-6,1e-2,fmt='%.2e')
+                    else:
+                        p['gas_sg']=synced_number(st,'Gas specific gravity [-]',float(clean_num(p.get('gas_sg'),0.7)),'rsg'+sid,0.55,1.5)
+                        if p['fluid_phase']=='gas_condensate': p['cgr_sm3_per_msm3']=synced_number(st,'Condensate-gas ratio [Sm³/MSm³]',float(clean_num(p.get('cgr_sm3_per_msm3'),100.0)),'rcg'+sid,0.0,2000.0)
+                    p['swi']=synced_number(st,'Initial water saturation Swi [-]',float(clean_num(p.get('swi'),0.2)),'rsw'+sid,0.0,0.9)
+                    p['min_pressure_bar']=unit_input(f"Abandonment pressure [{ul['pressure']}]",float(clean_num(p.get('min_pressure_bar'),20.0)),pressure_to_display,pressure_from_display,'rmp'+sid,0.0,1500.0)
+                with st.expander('Drive & water/GOR development'):
+                    p['aquifer_pi_m3d_bar']=synced_number(st,'Aquifer productivity [m³/d/bar] (0 = none)',float(clean_num(p.get('aquifer_pi_m3d_bar'),0.0)),'raq'+sid,0.0,1e5)
+                    if p['fluid_phase']=='oil':
+                        p['water_breakthrough_rf']=synced_number(st,'Water breakthrough at recovery factor [-]',float(clean_num(p.get('water_breakthrough_rf'),0.05)),'rwb'+sid,0.0,0.9)
+                        p['rf_at_max_water_cut']=synced_number(st,'Recovery factor at maximum water cut [-]',float(clean_num(p.get('rf_at_max_water_cut'),0.40)),'rwm'+sid,0.01,0.95)
+                        p['max_water_cut']=synced_number(st,'Maximum water cut [-]',float(clean_num(p.get('max_water_cut'),0.9)),'rwx'+sid,0.0,0.99)
+                        p['gor_rise_factor']=synced_number(st,'GOR rise below Pb [× per fraction of Pb]',float(clean_num(p.get('gor_rise_factor'),3.0)),'rgr'+sid,0.0,50.0)
+                from network.reservoir_mb import Tank
+                t_=Tank(n); linked_=[w['name'] for w in st.session_state.nodes if (w.get('params') or {}).get('reservoir_id')==sid]
+                st.caption(f"Pore volume {t_.pv/1e6:,.2f} MSm³ (reservoir) · drains to: {', '.join(linked_) or 'no wells yet — drag this tank onto its wells'}")
             if n['kind'] in ('water_injector','gas_injector'):
                 p['injectivity_m3d_bar']=synced_number(st,'Injectivity index [m³/d/bar]',float(clean_num(p.get('injectivity_m3d_bar'),10.0)),'ii'+sid,0.0,1e5)
                 p['reservoir_pressure_bar']=unit_input(f"Reservoir pressure [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),200.0)),pressure_to_display,pressure_from_display,'ipr'+sid,1.,1500.)
                 p['depth_m']=unit_input(f"TVD [{ul['length']}]",float(clean_num(p.get('depth_m'),2000.0)),length_to_display,length_from_display,'idp'+sid,0.,10000.)
                 p['available']=synced_checkbox(st,'Injector available',p.get('available',True) not in (False,'false','False',0),'iav'+sid)
+                tanks_={t['id']:t['name'] for t in st.session_state.nodes if t.get('kind')=='reservoir'}
+                if tanks_:
+                    cur=p.get('reservoir_id') if p.get('reservoir_id') in tanks_ else ''
+                    sel=synced_select(st,'Drains reservoir tank',['']+list(tanks_),cur,'rid'+sid,format_func=lambda k: tanks_.get(k,'— none (own reservoir pressure) —'))
+                    if sel: p['reservoir_id']=sel
+                    else: p.pop('reservoir_id',None)
             if n['kind']=='well':
                 p['available']=synced_checkbox(st,'Well open / available',p.get('available',True) not in (False,'false','False',0),'wav'+sid)
+                tanks_={t['id']:t['name'] for t in st.session_state.nodes if t.get('kind')=='reservoir'}
+                if tanks_:
+                    cur=p.get('reservoir_id') if p.get('reservoir_id') in tanks_ else ''
+                    sel=synced_select(st,'Drains reservoir tank',['']+list(tanks_),cur,'rid'+sid,format_func=lambda k: tanks_.get(k,'— none (own reservoir pressure) —'))
+                    if sel: p['reservoir_id']=sel
+                    else: p.pop('reservoir_id',None)
+                if p.get('reservoir_id') in tanks_: st.caption('Reservoir pressure comes from the tank (material balance); the value below is only used without a tank.')
                 p['reservoir_pressure_bar']=unit_input(f"Reservoir pressure [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),220)),pressure_to_display,pressure_from_display,'pr'+sid,1.,1500.)
-                p['ipr_model']=synced_select(st,'IPR',['PI','Vogel'],p.get('ipr_model','PI'),'im'+sid)
-                if p['ipr_model']=='PI': p['pi_m3d_bar']=unit_input('PI [m³/d/bar]' if PROFILE=='norwegian_si' else 'PI [stb/d/psi]',float(clean_num(p.get('pi_m3d_bar'),10)),pi_to_display,pi_from_display,'pi'+sid,0.001,10000.)
+                p['ipr_model']=synced_select(st,'IPR',['PI','Vogel','Gas'],p.get('ipr_model','PI') if p.get('ipr_model','PI') in ('PI','Vogel','Gas') else 'PI','im'+sid,format_func={'PI':'Productivity index (oil)','Vogel':'Vogel (solution gas)','Gas':'Gas backpressure'}.get)
+                if p['ipr_model']=='Gas':
+                    p['gas_c_sm3d_bar2n']=synced_number(st,'Backpressure C [Sm³/d/bar²ⁿ]',float(clean_num(p.get('gas_c_sm3d_bar2n'),50.0)),'gc'+sid,0.0001,1e7)
+                    p['gas_n']=synced_number(st,'Backpressure exponent n [-]',float(clean_num(p.get('gas_n'),1.0)),'gn'+sid,0.5,1.0)
+                elif p['ipr_model']=='PI': p['pi_m3d_bar']=unit_input('PI [m³/d/bar]' if PROFILE=='norwegian_si' else 'PI [stb/d/psi]',float(clean_num(p.get('pi_m3d_bar'),10)),pi_to_display,pi_from_display,'pi'+sid,0.001,10000.)
                 else: p['qmax_m3d']=unit_input(f"Vogel qmax [{ul['liquid_rate']}]",float(clean_num(p.get('qmax_m3d'),1500)),liquid_rate_to_display,liquid_rate_from_display,'qm'+sid,0.1,1e7)
                 p['depth_m']=unit_input(f"TVD [{ul['length']}]",float(clean_num(p.get('depth_m'),2000)),length_to_display,length_from_display,'de'+sid,1.,10000.); p['tubing_id_m']=unit_input(f"Tubing ID [{ul['diameter']}]",float(clean_num(p.get('tubing_id_m'),.0889)),diameter_to_display,diameter_from_display,'ti'+sid,0.01,1.,fmt='%.4f')
                 p['water_cut']=synced_slider(st,'Water cut',0.,0.99,float(clean_num(p.get('water_cut'),.2)),'wc'+sid); p['gor_sm3sm3']=unit_input(f"Producing GOR [{ul['gor']}]",float(clean_num(p.get('gor_sm3sm3'),100)),gor_to_display,gor_from_display,'go'+sid,0.,5000.); p['temperature_c']=unit_input(f"Tubing temperature [{ul['temperature']}]",float(clean_num(p.get('temperature_c'),70)),temperature_to_display,temperature_from_display,'te'+sid,-10.,250.)
@@ -261,35 +312,67 @@ with tab_nodal:
     wells=[n for n in st.session_state.nodes if n['kind']=='well']
     if wells:
         wmap={w['id']:w for w in wells}
-        wid=pick('Well',list(wmap),'nodal_well',format_func=lambda k: wmap[k]['name']); w=wmap[wid]; prm=w['params']; ws=well_settings(prm)
+        wid=pick('Well',list(wmap),'nodal_well',format_func=lambda k: wmap[k]['name'])
+        # Same well model and tank link as the network solve, so both always agree.
+        linked_nodes=apply_tank_links(st.session_state.nodes); w=next(x for x in linked_nodes if x['id']==wid); prm=dict(w['params'])
+        tank=next((t for t in st.session_state.nodes if t['id']==prm.get('reservoir_id')),None)
         r=solved()
-        fixed=[float(n['pressure_bar']) for n in st.session_state.nodes if n.get('pressure_bar') is not None and n['kind']!='well']
+        fixed=[float(n['pressure_bar']) for n in st.session_state.nodes if n.get('pressure_bar') is not None and n['kind'] not in ('well','reservoir')]
         default_whp=r[0][wid] if (r and wid in r[0]) else (w.get('pressure_bar') or (min(fixed)+2.0 if fixed else 30.0))
-        whp=unit_input(f"Wellhead pressure for nodal curve [{ul['pressure']}]",float(default_whp),pressure_to_display,pressure_from_display,'nodal_whp_'+wid,1.,1000.)
-        st.caption('Defaults to the solved network WHP when a solution exists, otherwise to the lowest boundary pressure + 2 bar.')
-        c1,c2,c3=st.columns(3); vlp_model=c1.selectbox('VLP correlation',['Beggs-Brill','Homogeneous'],index=0 if ws['correlation'].lower().startswith('beggs') else 1,key='nodal_vlp_'+wid); lift_type=c2.selectbox('Lift case',['none','gas_lift','ESP'],index=['none','gas_lift','ESP'].index(prm.get('lift_type','none')) if prm.get('lift_type','none') in ('none','gas_lift','ESP') else 0,key='nodal_lift_'+wid); c3.metric('Skin PI multiplier',f"{ws['pi']/max(float(clean_num(prm.get('pi_m3d_bar'),10)),1e-9):.2f}")
-        gl=float(clean_num(prm.get('gas_lift_injection_sm3d'),30000.0)); esp={'rated_rate_m3d':float(clean_num(prm.get('esp_rated_rate_m3d'),1000.0)),'shutoff_head_bar':float(clean_num(prm.get('esp_shutoff_head_bar'),80.0)),'speed_fraction':float(clean_num(prm.get('esp_speed_fraction'),1.0))}
-        if lift_type=='gas_lift': gl=st.number_input('Gas-lift injection [Sm³/d]',0.0,2000000.0,gl,key='nodal_gl_'+wid)
-        if lift_type=='ESP':
-            esp['rated_rate_m3d']=unit_input(f"ESP rated rate [{ul['liquid_rate']}]",esp['rated_rate_m3d'],liquid_rate_to_display,liquid_rate_from_display,'nodal_er_'+wid,1.,1e7); esp['shutoff_head_bar']=unit_input(f"ESP shutoff head [{ul['pressure']}]",esp['shutoff_head_bar'],pressure_to_display,pressure_from_display,'nodal_eh_'+wid,1.,500.)
-        vlp_common=dict(roughness_m=ws['roughness'],temperature_c=ws['temperature'],water_cut=ws['water_cut'],gor_sm3sm3=ws['gor'],api=ws['api'],gas_sg=ws['gas_sg'],bottomhole_temperature_c=ws['bh_temperature'])
-        common=dict(ipr_model=ws['ipr_model'],pi_m3d_bar=max(ws['pi'],1e-9),qmax_m3d=max(ws['qmax'],1e-9),vlp_model=vlp_model,lift_type=lift_type,gas_injection_sm3d=gl,esp=esp,lift_assist_bar=ws['lift_assist_bar'],gas_injection_depth_m=ws['gas_lift_depth'],**vlp_common)
-        op=nodal_operating_point(ws['pr'],whp,ws['depth'],ws['tubing_id'],**common)
-        curve=pd.DataFrame(op['curve']); curve['Rate']=curve['rate_m3d'].map(lambda x: liquid_rate_to_display(x,PROFILE)); curve['IPR']=curve['ipr_bhp_bar'].map(lambda x: pressure_to_display(x,PROFILE)); curve['VLP']=curve['vlp_bhp_bar'].map(lambda x: pressure_to_display(x,PROFILE)); fig=go.Figure(); fig.add_scatter(x=curve['Rate'],y=curve['IPR'],name='IPR'); fig.add_scatter(x=curve['Rate'],y=curve['VLP'],name=f'VLP — {vlp_model}'); fig.update_layout(xaxis_title=f"Liquid rate [{ul['liquid_rate']}]",yaxis_title=f"Bottomhole pressure [{ul['pressure']}]",title=f"{w['name']} — nodal analysis"); st.plotly_chart(fig,use_container_width=True)
-        if op['converged']:
-            qa=well_performance_qa(op,ws['pr']); a,b,c=st.columns(3); a.metric('Operating liquid rate',f"{liquid_rate_to_display(op['rate_m3d'],PROFILE):.1f} {ul['liquid_rate']}"); b.metric('Operating BHP',f"{pressure_to_display(op['bhp_bar'],PROFILE):.1f} {ul['pressure']}"); c.metric('Well QA','PASS' if qa['acceptable'] else 'CHECK')
-            if qa['warnings']: st.warning(', '.join(qa['warnings']))
-            if lift_type=='ESP':
-                ep=esp_performance(op['rate_m3d'],**esp); st.write({'ESP head':f"{pressure_to_display(ep['head_bar'],PROFILE):.1f} {ul['pressure']}",'Power':f"{ep['hydraulic_power_kw']:.1f} kW",'Within recommended rate envelope':ep['within_rate_envelope'],'NPSH check':ep['npsh_ok']})
-        else: st.warning(f"No IPR/VLP intersection at {pressure_to_display(whp,PROFILE):.1f} {ul['pressure']} WHP: the well cannot flow naturally against this back-pressure. Lower the WHP or add lift.")
-        if st.button('Screen gas-lift allocation for this well'):
-            glr=optimize_gas_lift(ws['pr'],whp,ws['depth'],ws['tubing_id'],ipr_model=ws['ipr_model'],pi_m3d_bar=max(ws['pi'],1e-9),qmax_m3d=max(ws['qmax'],1e-9),max_injection_sm3d=max(gl*3,60000.0),gas_injection_depth_m=ws['gas_lift_depth'],**vlp_common)
-            gdf=pd.DataFrame(glr['candidates']); st.dataframe(gdf[[c for c in ['gas_injection_sm3d','rate_m3d','incremental_liquid_m3d','bhp_bar','converged'] if c in gdf]],hide_index=True,use_container_width=True)
-            if not gdf.empty: st.plotly_chart(px.line(gdf,x='gas_injection_sm3d',y='rate_m3d',markers=True,title='Gas-lift performance curve'),use_container_width=True)
-            st.caption(glr['limitations'][0])
-        st.caption('Artificial-lift outputs are screening calculations. Use calibrated VLP and vendor ESP/gas-lift design models before equipment selection or operating decisions.')
+        with st.container(border=True):
+            c0,c1,c2=st.columns(3)
+            with c0: whp=unit_input(f"Wellhead pressure [{ul['pressure']}]",float(default_whp),pressure_to_display,pressure_from_display,'nodal_whp_'+wid,1.,1000.)
+            prm['vlp_model']=prm['correlation']=c1.selectbox('Tubing correlation',['Beggs-Brill','Homogeneous'],index=0 if str(prm.get('vlp_model',prm.get('correlation','Beggs-Brill'))).lower().startswith('beggs') else 1,key='nodal_vlp_'+wid)
+            prm['lift_type']=c2.selectbox('Lift case',['none','gas_lift','ESP'],index=['none','gas_lift','ESP'].index(prm.get('lift_type','none')) if prm.get('lift_type','none') in ('none','gas_lift','ESP') else 0,key='nodal_lift_'+wid)
+            if prm['lift_type']=='gas_lift': prm['gas_lift_injection_sm3d']=st.number_input('Gas-lift injection [Sm³/d]',0.0,2000000.0,float(clean_num(prm.get('gas_lift_injection_sm3d'),30000.0)),key='nodal_gl_'+wid)
+            if prm['lift_type']=='ESP':
+                e1,e2=st.columns(2)
+                with e1: prm['esp_rated_rate_m3d']=unit_input(f"ESP rated rate [{ul['liquid_rate']}]",float(clean_num(prm.get('esp_rated_rate_m3d'),1000.0)),liquid_rate_to_display,liquid_rate_from_display,'nodal_er_'+wid,1.,1e7)
+                with e2: prm['esp_shutoff_head_bar']=unit_input(f"ESP shutoff head [{ul['pressure']}]",float(clean_num(prm.get('esp_shutoff_head_bar'),80.0)),pressure_to_display,pressure_from_display,'nodal_eh_'+wid,1.,500.)
+            st.caption(('Reservoir pressure from tank **'+tank['name']+'** (material balance). ' if tank else 'Reservoir pressure from the well input. ')+'WHP defaults to the solved network value when a solution exists.')
+        ws=well_settings(prm)
+        from physics.well_model import ipr_pwf, vlp_bhp, solve_well_rate, rate_capacity
+        qcap=max(rate_capacity(ws),1.0); qs=[qcap*i/80 for i in range(81)]
+        curve=pd.DataFrame({'q':qs,'IPR':[ipr_pwf(q,ws) for q in qs],'VLP':[vlp_bhp(q,whp,ws)[0] for q in qs]})
+        curve=curve[curve['IPR']>=0]
+        qop,stat=solve_well_rate(whp,ws)
+        fig=go.Figure(); X=[liquid_rate_to_display(v,PROFILE) for v in curve['q']]
+        fig.add_scatter(x=X,y=[pressure_to_display(v,PROFILE) for v in curve['IPR']],name='Inflow (IPR)',mode='lines',line=dict(color=charts.OIL,width=2))
+        fig.add_scatter(x=X,y=[pressure_to_display(v,PROFILE) for v in curve['VLP']],name=f"Outflow (VLP, {prm['vlp_model']})",mode='lines',line=dict(color=charts.CATEGORICAL[0],width=2))
+        if qop>0:
+            bop=ipr_pwf(qop,ws); fig.add_scatter(x=[liquid_rate_to_display(qop,PROFILE)],y=[pressure_to_display(bop,PROFILE)],name='Operating point',mode='markers',marker=dict(size=11,color=charts.GAS,line=dict(width=2,color='white')))
+        st.plotly_chart(charts.style(fig,f"{w['name']} — nodal analysis",f"Bottom-hole pressure [{ul['pressure']}]",f"Liquid rate [{ul['liquid_rate']}]",420),use_container_width=True)
+        a,b,c,d=st.columns(4)
+        a.metric('Liquid rate',f"{liquid_rate_to_display(qop,PROFILE):,.1f} {ul['liquid_rate']}")
+        b.metric('Oil rate',f"{liquid_rate_to_display(qop*(1-ws['water_cut']),PROFILE):,.1f} {ul['liquid_rate']}")
+        c.metric('Gas rate',f"{qop*(1-ws['water_cut'])*ws['gor']:,.0f} Sm³/d")
+        d.metric('Status',{'flowing':'Flowing','rate_limited':'Rate-limited','dead':'Cannot flow','below_min_rate':'Below min. rate','shut_in':'Shut in'}.get(stat,stat))
+        if qop<=0: st.warning(f"No stable IPR/VLP intersection at {pressure_to_display(whp,PROFILE):.1f} {ul['pressure']} WHP — the well cannot flow against this back-pressure. Lower the WHP or add lift.")
+        if prm['lift_type']=='ESP' and qop>0:
+            ep=esp_performance(qop,rated_rate_m3d=ws['esp']['rated_rate_m3d'],shutoff_head_bar=ws['esp']['shutoff_head_bar'],speed_fraction=ws['esp']['speed_fraction'])
+            st.info(f"ESP head {pressure_to_display(ep['head_bar'],PROFILE):.1f} {ul['pressure']} · hydraulic power {ep['hydraulic_power_kw']:.0f} kW · {'within' if ep['within_rate_envelope'] else 'OUTSIDE'} recommended rate envelope")
+        with st.expander('Gas-lift performance curve'):
+            gmax=st.number_input('Maximum injection to screen [Sm³/d]',10000.0,2000000.0,max(3*float(clean_num(prm.get('gas_lift_injection_sm3d'),30000.0)),90000.0),10000.0,key='nodal_glmax_'+wid)
+            if st.button('Compute gas-lift curve',key='nodal_glbtn_'+wid):
+                rows=[]
+                for inj in [gmax*i/12 for i in range(13)]:
+                    pp=dict(prm,lift_type='gas_lift',gas_lift_injection_sm3d=inj); q_,_=solve_well_rate(whp,well_settings(pp)); rows.append({'Gas-lift injection [Sm3/d]':inj,'Liquid rate [m3/d]':q_})
+                gdf=pd.DataFrame(rows); best=gdf.loc[gdf['Liquid rate [m3/d]'].idxmax()]
+                st.plotly_chart(charts.lines(gdf,'Gas-lift injection [Sm3/d]',['Liquid rate [m3/d]'],'Gas-lift performance curve','Sm³/d liquid',colors={'Liquid rate [m3/d]':charts.OIL}),use_container_width=True)
+                st.success(f"Maximum liquid {best['Liquid rate [m3/d]']:,.0f} Sm³/d at {best['Gas-lift injection [Sm3/d]']:,.0f} Sm³/d injection (screening — no valve or compressor model).")
+        st.caption('Artificial-lift outputs are screening calculations. Use calibrated VLP and vendor ESP/gas-lift design models before equipment selection.')
     else: st.info('Add a well to run nodal analysis.')
 
+with tab_tanks:
+    st.subheader('Reservoir tanks')
+    st.caption('Tanks hold the in-place volume and fluid phase. Drag a tank onto a well (or injector) in the editor to assign it; linked wells take the tank pressure, and the forecast depletes the tank by material balance.')
+    ts=tank_summary(st.session_state.nodes)
+    if ts:
+        tdf=pd.DataFrame(ts); st.dataframe(tdf.style.format({'Pi [bar]':'{:.0f}','STOIIP [MSm3]':'{:,.2f}','GIIP [GSm3]':'{:,.3f}','Pore volume [MSm3 res]':'{:,.2f}'},na_rep='—'),hide_index=True,use_container_width=True)
+        unl=[w['name'] for w in st.session_state.nodes if w.get('kind')=='well' and not (w.get('params') or {}).get('reservoir_id')]
+        if unl: st.warning('Producers without a tank (they use per-well decline in forecasts): '+', '.join(unl))
+    else:
+        st.info('No reservoir tank yet. Add **Reservoir tank** from the editor palette, set its in-place volume and fluid phase in the property panel, then drag it onto the wells it drains.')
 
 with tab_diag:
     pipes=[e for e in st.session_state.edges if e.get('kind','pipeline')=='pipeline']
@@ -301,7 +384,7 @@ with tab_diag:
         qq=float(q[e['id']]); inlet=p[e['source']] if qq>=0 else p[e['target']]
         L=float(clean_num(e.get('length_m'),1000.0)); dz=float(clean_num(e.get('elevation_change_m'),0.0))
         prof=pressure_profile(abs(qq),L,float(clean_num(e.get('diameter_m'),.154)),float(clean_num(e.get('roughness_m'),4.5e-5)),dz if qq>=0 else -dz,inlet,float(clean_num(prm.get('temperature_c'),50)),float(clean_num(prm.get('water_cut'),.2)),float(clean_num(prm.get('gor_sm3sm3'),100)),float(clean_num(prm.get('api'),35)),float(clean_num(prm.get('gas_sg'),.75)))
-        xcol=f"Distance from inlet [{ul['length']}]"; ppcol=f"Pressure [{ul['pressure']}]"; dfp=pd.DataFrame({xcol:[length_to_display(x,PROFILE) for x in prof['distance_m']],ppcol:[pressure_to_display(x,PROFILE) for x in prof['pressure_bar']]}); st.plotly_chart(px.line(dfp,x=xcol,y=ppcol,title=f"{e['id']} pressure profile"+(' (reverse flow)' if qq<0 else '')),use_container_width=True)
+        xcol=f"Distance from inlet [{ul['length']}]"; ppcol=f"Pressure [{ul['pressure']}]"; dfp=pd.DataFrame({xcol:[length_to_display(x,PROFILE) for x in prof['distance_m']],ppcol:[pressure_to_display(x,PROFILE) for x in prof['pressure_bar']]}); st.plotly_chart(charts.style(px.line(dfp,x=xcol,y=ppcol,title=f"{e['id']} pressure profile"+(' (reverse flow)' if qq<0 else ''))),use_container_width=True)
         outlet_node=e['target'] if qq>=0 else e['source']
         st.write('Profile outlet pressure:',f"{pressure_to_display(prof['pressure_bar'][-1],PROFILE):.2f} {ul['pressure']}",' | Network node:',f"{pressure_to_display(p[outlet_node],PROFILE):.2f} {ul['pressure']}")
         if prof['regime']: st.dataframe(pd.DataFrame({'Segment':range(1,len(prof['regime'])+1),'Liquid holdup':prof['holdup'],'Flow regime':prof['regime']}),hide_index=True,use_container_width=True)
@@ -326,7 +409,7 @@ with tab_fa:
             for rr in choice['segments']:
                 rows.append({'Segment':rr['segment'],f"Distance [{ul['length']}]":length_to_display(rr['x1_m'],PROFILE),f"Pressure [{ul['pressure']}]":pressure_to_display(rr['p_out_bar'],PROFILE),f"Temperature [{ul['temperature']}]":temperature_to_display(rr['temperature_out_c'],PROFILE),'Hydrate margin [°C]':rr['hydrate_margin_c'],'Wax margin [°C]':rr['wax_margin_c'],('Velocity [m/s]' if PROFILE=='norwegian_si' else 'Velocity [ft/s]'):velocity_to_display(rr['mixture_velocity_ms'],PROFILE),'Erosion ratio':rr['erosion_ratio'],'Loading ratio':rr['liquid_loading_ratio'],'Regime':rr['flow_regime'],'Slug indicator':rr['slugging_indicator']})
             fdf=pd.DataFrame(rows); st.dataframe(fdf,hide_index=True,use_container_width=True)
-            st.plotly_chart(px.line(fdf,x=f"Distance [{ul['length']}]",y=f"Temperature [{ul['temperature']}]",title='Thermal profile'),use_container_width=True)
+            st.plotly_chart(charts.style(px.line(fdf,x=f"Distance [{ul['length']}]",y=f"Temperature [{ul['temperature']}]",title='Thermal profile')),use_container_width=True)
             with st.expander('Model limitations / interpretation'):
                 for item in choice['limitations']: st.write('•',item)
             st.download_button('Export flow-assurance JSON',json.dumps(to_builtin(fa),indent=2,default=str),'fieldnet_flow_assurance.json','application/json',use_container_width=True)
@@ -341,7 +424,11 @@ with tab_results:
         else: st.info(f'{stt}: {msg} Solve the network to populate results.')
     else:
         p,q,info,d=r; nm={n['id']:n['name'] for n in st.session_state.nodes}
-        a,b,c,dcol=st.columns(4); a.metric('Converged','Yes' if info['success'] else 'No'); b.metric('Max residual',f"{info['max_abs_residual']:.2e}"); c.metric('Nodes',len(p)); dcol.metric('Connections',len(q))
+        k1,k2,k3,k4,k5=st.columns(5)
+        k1.metric('Oil',f"{sum(v.get('oil_rate_m3d',0) for v in d.values()):,.0f} Sm³/d"); k2.metric('Water',f"{sum(v.get('water_rate_m3d',0) for v in d.values()):,.0f} Sm³/d")
+        k3.metric('Gas',f"{sum(v.get('gas_rate_sm3d',0) for v in d.values())/1e3:,.0f} kSm³/d"); k4.metric('Wells flowing',f"{sum(1 for v in d.values() if v['liquid_rate_m3d']>1e-6)}/{len(d)}")
+        k5.metric('Water injection',f"{sum((info.get('injector_rates') or {}).values()):,.0f} m³/d")
+        a,b,c,dcol=st.columns(4); a.metric('Converged','Yes' if info['success'] else 'No'); b.metric('Max residual',f"{info['max_abs_residual']:.2e}"); c.metric('Quality gate',info.get('quality_gate','—')); dcol.metric('Constraint violations',info.get('violations',0))
         if info.get('quality_gate')!='PASS': st.warning('Quality gate FAIL. Review the solver debugger below (topology, boundary conditions, dead/unstable wells).')
         with st.expander('Solver diagnostics'):
             for item in solver_diagnostics(info,p,q): st.write(item['severity'].upper(), item['code'], '—', item['message'])
@@ -360,9 +447,10 @@ with tab_results:
         l,rr_=st.columns(2); l.plotly_chart(px.bar(rdf,x='Component',y=pcol,title='Node pressures'),use_container_width=True); rr_.plotly_chart(px.bar(qdf,x='Connection',y=qcol,title='Connection rates'),use_container_width=True)
 
 with tab_constraints:
+    with st.container(border=True): render_constraint_editor(st, st.session_state.nodes, st.session_state.edges)
     r=solved()
     if not r:
-        st.info('Solve the network first to evaluate equipment and operating constraints.')
+        st.info('Solve the network to check the constraints above against the operating point.')
     else:
         p,q,info,d=r
         c1,c2,c3=st.columns(3); c1.metric('Constraint checks',len(info.get('constraints',[]))); c2.metric('Violations',info.get('violations',0)); c3.metric('Equipment items',len(info.get('equipment',[])))
@@ -418,7 +506,7 @@ with tab_ops:
         if st.button('Run pressure sensitivity'):
             st.session_state.sens=run_sensitivity(st.session_state.nodes,st.session_state.edges,'node',sn['id'],'pressure_bar',np.linspace(lo,hi,steps))
         if st.session_state.get('sens'):
-            sdf=pd.DataFrame(st.session_state.sens); st.dataframe(sdf,hide_index=True,use_container_width=True); st.plotly_chart(px.line(sdf,x='Value',y='Total liquid [m3/d]',markers=True,title='Production sensitivity to boundary pressure [bar]'),use_container_width=True)
+            sdf=pd.DataFrame(st.session_state.sens); st.dataframe(sdf,hide_index=True,use_container_width=True); st.plotly_chart(charts.style(px.line(sdf,x='Value',y='Total liquid [m3/d]',markers=True,title='Production sensitivity to boundary pressure [bar]')),use_container_width=True)
     else: st.caption('Add a fixed-pressure boundary to run a sensitivity.')
 
 
@@ -451,82 +539,27 @@ with tab_cal:
         st.download_button('Download calibration JSON',json.dumps(to_builtin(export),indent=2,default=str),'fieldnet_calibration.json','application/json',use_container_width=True)
 
 with tab_forecast:
-    st.subheader('Life-of-field forecast')
-    st.caption('Quasi-steady-state forecast: reservoir/well/facility state is updated at each timestep and the full network is re-solved (warm-started from the previous step). This is not a transient reservoir simulator.')
-    a,b,c,d=st.columns(4)
-    start=a.date_input('Forecast start',key='fc_start').isoformat(); years=b.number_input('Years',0.1,50.0,5.0,0.5,key='fc_years'); step=c.selectbox('Timestep [days]',[7,14,30,60,90],index=2,key='fc_step')
-    fc_caps=d.checkbox('Honour capacity limits',value=True,key='fc_caps')
-    wells=[n for n in st.session_state.nodes if n['kind']=='well']
-    dep={}
-    with st.expander('Reservoir depletion assumptions'):
-        for w in wells:
-            c1,c2=st.columns(2); decline=c1.number_input(f"{w['name']} pressure decline [bar/1000 m³]",0.0,10.0,float(clean_num(w.get('params',{}).get('pressure_decline_bar_per_1000m3'),0.03)),0.01,key='dec'+w['id']); support=c2.number_input(f"{w['name']} pressure support [bar/day]",0.0,5.0,float(clean_num(w.get('params',{}).get('pressure_support_bar_per_day'),0.0)),0.001,key='sup'+w['id']); dep[w['id']]={'pressure_decline_bar_per_1000m3':decline,'pressure_support_bar_per_day':support}
-    st.markdown('**Schedule / intervention events**')
-    st.caption('Columns: date (YYYY-MM-DD), target_id, field (e.g. `params.available`, `pressure_bar`, `params.max_liquid_rate_m3d`), value.')
-    default_events=pd.DataFrame({'date':pd.Series(dtype=str),'target_id':pd.Series(dtype=str),'field':pd.Series(dtype=str),'value':pd.Series(dtype=str)})
-    evdf=st.data_editor(default_events,num_rows='dynamic',use_container_width=True,key='forecast_events')
-    if st.button('▶ Run life-of-field simulation',type='primary',use_container_width=True):
-        events=[]; bad=[]
-        valid_ids={str(x.get('id')) for x in [*st.session_state.nodes,*st.session_state.edges]}
-        for row in evdf.to_dict('records'):
-            dte,tid,fld=clean_text(row.get('date')),clean_text(row.get('target_id')),clean_text(row.get('field'))
-            if not (dte and tid and fld): continue
-            try: dte=pd.Timestamp(dte).date().isoformat()
-            except Exception: bad.append(f'bad date {dte!r}'); continue
-            if tid not in valid_ids: bad.append(f'unknown target {tid!r}'); continue
-            # Values from the editor are strings: coerce "30" -> 30, "false" -> False.
-            events.append({'date':dte,'target_id':tid,'field':fld,'value':_coerce_value(row.get('value'))})
-        if bad: st.error('Ignored events: '+', '.join(bad))
-        with st.spinner('Resolving network through forecast timesteps...'):
-            try: st.session_state.forecast=run_forecast(st.session_state.nodes,st.session_state.edges,start,float(years),int(step),events,dep,enforce_constraints=bool(fc_caps))
-            except Exception as exc: st.error(f'Forecast failed: {exc}')
-    fc=st.session_state.get('forecast')
-    if fc and fc.get('field'):
-        fdf=pd.DataFrame(fc['field']); wdf=pd.DataFrame(fc['wells']); cdf=pd.DataFrame(fc['constraints'])
-        m1,m2,m3,m4=st.columns(4); m1.metric('Final liquid',f"{fdf.iloc[-1]['Total liquid [m3/d]']:.0f} m³/d"); m2.metric('Cumulative liquid',f"{fdf.iloc[-1]['Cumulative liquid [m3]']/1e6:.3f} MMm³"); m3.metric('Final oil',f"{fdf.iloc[-1]['Oil [m3/d]']:.0f} m³/d"); m4.metric('Non-converged steps',int((~fdf['Converged'].astype(bool)).sum()))
-        st.plotly_chart(px.line(fdf,x='Date',y=['Oil [m3/d]','Water [m3/d]','Total liquid [m3/d]'],title='Field production profile'),use_container_width=True)
-        st.plotly_chart(px.line(fdf,x='Date',y='Gas [Sm3/d]',title='Field gas profile'),use_container_width=True)
-        if not wdf.empty:
-            st.plotly_chart(px.line(wdf,x='Date',y='Liquid [m3/d]',color='Well',title='Well liquid profiles'),use_container_width=True)
-            st.plotly_chart(px.line(wdf,x='Date',y='Reservoir pressure [bar]',color='Well',title='Reservoir pressure depletion'),use_container_width=True)
-        st.dataframe(fdf,hide_index=True,use_container_width=True)
-        if not cdf.empty:
-            with st.expander('Constraint history'): st.dataframe(cdf,hide_index=True,use_container_width=True)
-        st.download_button('Download field forecast CSV',fdf.to_csv(index=False),'fieldnet_forecast.csv','text/csv',use_container_width=True)
-        st.divider(); st.subheader('Scenario & uncertainty planning')
-        st.caption('Compare depletion uncertainty using the same network and schedule. Low/Base/High refer to reservoir-pressure-decline assumptions, not probabilistic P10/P50/P90 reserves.')
-        if st.button('Run 3-case depletion uncertainty',use_container_width=True):
-            cases=uncertainty_cases(dep)
-            with st.spinner('Running forecast scenarios...'):
-                st.session_state.v10_scenarios=run_scenarios(st.session_state.nodes,st.session_state.edges,start,float(years),int(step),cases)
-        if st.session_state.get('v10_scenarios'):
-            frames=[pd.DataFrame(x['forecast']['field']) for x in st.session_state.v10_scenarios]
-            comp=pd.concat(frames,ignore_index=True)
-            st.plotly_chart(px.line(comp,x='Date',y='Oil [m3/d]',color='Scenario',title='Scenario oil comparison'),use_container_width=True)
-            st.plotly_chart(px.line(comp,x='Date',y='Total liquid [m3/d]',color='Scenario',title='Scenario liquid comparison'),use_container_width=True)
-
-
-
-with tab_development:
-    render_field_development(st, st.session_state.nodes, st.session_state.edges)
-
+    render_forecast(st, st.session_state.nodes, st.session_state.edges)
 
 with tab_dev26:
-    render_development_v26(st, st.session_state.nodes, st.session_state.edges)
+    render_schedule(st, st.session_state.nodes, st.session_state.edges)
+
+with tab_development:
+    render_scenarios(st, st.session_state.nodes, st.session_state.edges)
 
 with tab_uncertainty:
     render_uncertainty(st, st.session_state.nodes, st.session_state.edges)
 
 
 with tab_rel:
-    st.subheader('v24 Reliability & availability')
+    st.subheader('Reliability & availability')
     st.caption('Screening reliability Monte Carlo. Failure/repair availability is separate from hydraulic convergence; exponential MTBF/MTTR assumptions should be replaced with asset data when available.')
     candidates=[x for x in [*st.session_state.nodes,*st.session_state.edges] if x.get('kind') in ('well','pump','compressor','separator','separator_stage','pipeline')]
     rows=[{'enabled':False,'target_id':x['id'],'name':x.get('name',x['id']),'kind':x.get('kind'),'mtbf_days':365.0,'mttr_days':3.0,'redundancy_group':'','required_online':1} for x in candidates]
     rdf=st.data_editor(pd.DataFrame(rows),use_container_width=True,key='v24_rel_specs')
     a,b,c,d=st.columns(4); ryears=a.number_input('Reliability years',0.1,30.0,1.0,0.5); rstep=b.selectbox('Reliability step [days]',[1,7,14,30]); rn=c.number_input('Realizations',10,5000,200,10); rseed=d.number_input('Seed',0,999999,2401,1)
     base_rate=st.number_input('Reference production [m³/d]',0.0,1e7,1000.0,100.0)
-    if st.button('Run v24 reliability study',type='primary',use_container_width=True):
+    if st.button('Run reliability study',type='primary',use_container_width=True):
         try:
             specs=[ReliabilitySpec(clean_text(rw.get('target_id')),clean_num(rw.get('mtbf_days'),365.0),clean_num(rw.get('mttr_days'),3.0),(),clean_text(rw.get('redundancy_group')),int(clean_num(rw.get('required_online'),1))) for rw in rdf.to_dict('records') if bool(rw.get('enabled'))]
             if not specs: raise ValueError('Tick "enabled" for at least one component.')
@@ -534,11 +567,11 @@ with tab_rel:
         except Exception as exc: st.error(str(exc))
     if st.session_state.get('rel_v24'):
         rr=st.session_state.rel_v24; sm=rr['summary']; a,b,c,d=st.columns(4); a.metric('Mean availability',f"{sm['mean_availability']:.1%}"); b.metric('P90 availability',f"{sm['p90_availability']:.1%}"); c.metric('Mean deferred',f"{sm['mean_deferred_m3']:,.0f} m³"); d.metric('P(A<90%)',f"{sm['probability_below_90pct_availability']:.1%}")
-        rrf=pd.DataFrame(rr['realizations']); st.plotly_chart(px.histogram(rrf,x='availability',title='Availability distribution'),use_container_width=True); st.dataframe(rrf,hide_index=True,use_container_width=True)
-        st.download_button('Download v24 reliability JSON',json.dumps(to_builtin(rr),indent=2,default=str),'fieldnet_v24_reliability.json','application/json',use_container_width=True)
+        rrf=pd.DataFrame(rr['realizations']); st.plotly_chart(charts.style(px.histogram(rrf,x='availability',title='Availability distribution')),use_container_width=True); st.dataframe(rrf,hide_index=True,use_container_width=True)
+        st.download_button('Download reliability JSON',json.dumps(to_builtin(rr),indent=2,default=str),'fieldnet_v24_reliability.json','application/json',use_container_width=True)
 
 with tab_res25:
-    st.subheader('v25 Reservoir–Network Coupling 2.0')
+    st.subheader('Multi-tank reservoir coupling')
     st.caption('Reduced-order quasi-steady material balance coupled to the production network. Communicating tanks, aquifer influx and injector connectivity are planning models—not a 3-D reservoir simulator.')
     wells25=[n for n in st.session_state.nodes if n.get('kind')=='well']
     default_tanks=[]
@@ -564,7 +597,7 @@ with tab_res25:
     cdf25=st.data_editor(pd.DataFrame(columns=['injector_id','tank_id','weight']),num_rows='dynamic',use_container_width=True,key='v25_conn')
     sdf25=st.data_editor(pd.DataFrame(columns=['date','injector_id','rate_m3d']),num_rows='dynamic',use_container_width=True,key='v25_injsched')
     a,b,c=st.columns(3); rstart=a.date_input('Coupled forecast start',key='v25_start').isoformat(); ryears=b.number_input('Coupled years',0.02,50.0,1.0,0.25,key='v25_years'); rstep=c.selectbox('Coupled timestep [days]',[7,14,30,60,90],index=2,key='v25_step')
-    if st.button('Run v25 coupled forecast',type='primary',use_container_width=True):
+    if st.button('Run coupled forecast',type='primary',use_container_width=True):
         try:
             tanks=[]
             for rw in tdf.to_dict('records'):
@@ -583,11 +616,11 @@ with tab_res25:
     if st.session_state.get('res25'):
         rr=st.session_state.res25; tf=pd.DataFrame(rr['tanks']); ff=pd.DataFrame(rr['field'])
         if not tf.empty:
-            st.plotly_chart(px.line(tf,x='Date',y='pressure_after_bar',color='tank_id',title='Coupled tank pressure'),use_container_width=True)
+            st.plotly_chart(charts.style(px.line(tf,x='Date',y='pressure_after_bar',color='tank_id',title='Coupled tank pressure')),use_container_width=True)
             st.dataframe(tf,hide_index=True,use_container_width=True)
-        if not ff.empty: st.plotly_chart(px.line(ff,x='Date',y='Oil [m3/d]',title='Coupled field oil'),use_container_width=True)
+        if not ff.empty: st.plotly_chart(charts.style(px.line(ff,x='Date',y='Oil [m3/d]',title='Coupled field oil')),use_container_width=True)
         if rr.get('transfers'): st.dataframe(pd.DataFrame(rr['transfers']),hide_index=True,use_container_width=True)
-        st.download_button('Download v25 coupling JSON',json.dumps(to_builtin(rr),indent=2,default=str),'fieldnet_v25_reservoir_coupling.json','application/json',use_container_width=True)
+        st.download_button('Download coupling JSON',json.dumps(to_builtin(rr),indent=2,default=str),'fieldnet_v25_reservoir_coupling.json','application/json',use_container_width=True)
 
 
 with tab_io27:
@@ -603,7 +636,7 @@ with tab_qa28:
     if st.session_state.get('qa28'):
         qr=st.session_state.qa28; a,b,c,d=st.columns(4); a.metric('Quality gate',qr['quality_gate']); b.metric('Errors',qr['counts'].get('error',0)); c.metric('Warnings',qr['counts'].get('warning',0)); d.metric('Checks/info',qr['counts'].get('info',0))
         qdf=pd.DataFrame(qr['issues']); st.dataframe(qdf,hide_index=True,use_container_width=True)
-        st.download_button('Download v28 Model Quality Report',json.dumps(to_builtin(qr),indent=2,default=str),'fieldnet_v28_model_quality.json','application/json',use_container_width=True)
+        st.download_button('Download model quality report',json.dumps(to_builtin(qr),indent=2,default=str),'fieldnet_v28_model_quality.json','application/json',use_container_width=True)
 
 
 with tab_scen29:

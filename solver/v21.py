@@ -39,6 +39,7 @@ def topology_precheck(nodes, edges):
                 if y not in seen: seen.add(y); stack.append(y)
         anchored=any(fixed_pressure(byid[x]) is not None for x in comp)
         if not anchored and len(comp)==1 and not any(e.get('source')==comp[0] or e.get('target')==comp[0] for e in edges):
+            if byid[comp[0]].get('kind')=='reservoir': continue
             issues.append({'severity':'warning','code':'NOT_CONNECTED','component':comp[0],'message':'Component has no connections; it is excluded from the network solve.'}); continue
         if not anchored: issues.append({'severity':'error','code':'UNANCHORED_COMPONENT','component':','.join(comp),'message':'Connected component has no pressure boundary/reservoir anchor.'})
     issues.extend(boundary_issues(nodes,[e for e in edges if e.get('source') in known and e.get('target') in known]))
@@ -167,9 +168,10 @@ def split_isolated(nodes, edges):
 def solve_v21(nodes, edges, *, warm_start=None, attempts=3, residual_tolerance=1e-4, enforce_constraints=False):
     """Robust solve with warm starts, variable scaling, retry orchestration and optional
     enforcement of facility capacity limits."""
-    all_nodes=nodes
+    from network.reservoir_mb import ensure_tank_links
+    nodes=ensure_tank_links(nodes); all_nodes=nodes
     nodes,isolated=split_isolated(nodes,edges)
-    iso_rows=[{'severity':'warning','code':'NOT_CONNECTED','component':n.get('id'),'message':f"{n.get('name',n.get('id'))} has no connections and was excluded from the solve."} for n in isolated]
+    iso_rows=[{'severity':'warning','code':'NOT_CONNECTED','component':n.get('id'),'message':f"{n.get('name',n.get('id'))} has no connections and was excluded from the solve."} for n in isolated if n.get('kind')!='reservoir']  # tanks feed wells by assignment, not by pipes
     if not nodes:
         return {},{},{'success':False,'message':'No connected components to solve.','max_abs_residual':float('inf'),'constraints':[],'violations':0,'debug':iso_rows,'quality_gate':'FAIL','normalized_residual_score':float('inf')},{}
     topo=topology_precheck(nodes,edges)+iso_rows

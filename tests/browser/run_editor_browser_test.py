@@ -8,7 +8,7 @@ import json, sys, threading, http.server, functools, shutil, tempfile
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[2]; sys.path.insert(0,str(ROOT))
-from network.examples import demo_case
+from network.examples import demo_case, demo_field_case
 from ui.topology import auto_layout
 D=tempfile.mkdtemp()
 shutil.copy(ROOT/'ui/fieldnet_canvas/build/index.html',Path(D)/'editor.html'); shutil.copy(Path(__file__).parent/'host.html',Path(D)/'host.html')
@@ -82,6 +82,18 @@ with sync_playwright() as p:
     pg.evaluate('a=>window.renderArgs(a)',{**g,'status':'UNSOLVED','pressures':{},'rates':{}}); pg.wait_for_timeout(80)
     check(fr.evaluate("!!document.querySelector('path.live')"),'rerun during a drag does not cancel it')
     pg.keyboard.press('Escape'); pg.mouse.up()
+    # tank -> well drag assigns drainage instead of creating a pipe
+    fn,fe=demo_field_case(); fn=[dict(x,params={k:v for k,v in x['params'].items() if not (x['id']=='P1' and k=='reservoir_id')}) for x in fn]
+    pg.evaluate('a=>window.renderArgs(a)',{'nodes':fn,'edges':fe,'pressures':{},'rates':{},'status':'UNSOLVED','status_message':'','height':860}); pg.wait_for_timeout(200)
+    f.locator('#fit').click(); pg.wait_for_timeout(100)
+    check(fr.evaluate("document.querySelectorAll('path.drain').length")==3,'drainage links drawn as dashed lines (3 before)')
+    n0=nmsg(); a=port('T1','out'); t=port('P1','in'); pg.mouse.move(*a); pg.mouse.down(); pg.mouse.move(*t,steps=8)
+    check('drains this tank' in fr.evaluate("document.getElementById('status').textContent"),'hover explains tank assignment')
+    pg.mouse.up(); pg.wait_for_timeout(150)
+    last=pg.evaluate('window.msgs')[-1]; p1=[x for x in last['nodes'] if x['id']=='P1'][0]
+    check(nmsg()==n0+1 and p1['params'].get('reservoir_id')=='T1' and len(last['edges'])==len(fe),'tank→well drop assigns reservoir_id and adds no pipe')
+    check(fr.evaluate("document.querySelectorAll('path.drain').length")==4,'new drainage link drawn')
+    check('oil · 30.0 MSm³' in fr.evaluate("document.querySelector('.node[data-id=\"T1\"] .result').textContent"),'tank node shows phase and in-place volume')
     check(not errs, 'no JS errors: '+'; '.join(errs))
     b.close()
 srv.shutdown(); print('ALL PASS' if ok else 'FAILURES'); sys.exit(0 if ok else 1)
