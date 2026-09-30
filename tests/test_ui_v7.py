@@ -26,4 +26,4 @@ def test_custom_component_is_bidirectional():
     text=(Path(__file__).parents[1]/'ui/fieldnet_canvas/build/index.html').read_text()
     assert 'streamlit:setComponentValue' in text
     assert 'streamlit:componentReady' in text
-    assert 'click target IN port' in text
+    assert 'Drop on the target IN port' in text

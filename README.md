@@ -2,6 +2,8 @@
 
 v30 is an audit release of v29: corrected well/VLP physics and network kernel, GAP-style well and capacity constraints, canvas/property-panel synchronisation fixes and NaN-safe data editors. See **AUDIT_V30.md** for every finding and fix.
 
+**v30.1:** new graph editor — drag an OUT port onto an IN port to connect (live line), zoom/pan/Fit/Reset handled inside the editor without Streamlit reruns, a single editor→solver contract (`ui/graph_contract.py`) and explicit UNSOLVED / SOLVING / SOLVED / FAILED model states.
+
 # FieldNet v29 — Development Planning
 
 Production-only integrated network/forecast/uncertainty simulator with v19 flow-assurance screening. Economics is intentionally excluded. See `FLOW_ASSURANCE_V19.md` and `UNIT_SYSTEMS.md`.

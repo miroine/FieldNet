@@ -1,0 +1,7 @@
+<!doctype html><html><body style="margin:0;background:#000">
+<iframe id="f" src="editor.html" style="width:1100px;height:640px;border:0"></iframe>
+<script>
+window.msgs=[];window.ready=false;
+window.addEventListener('message',ev=>{const d=ev.data;if(d.type==='streamlit:componentReady')window.ready=true;if(d.type==='streamlit:setComponentValue')window.msgs.push(d.value)});
+window.renderArgs=a=>document.getElementById('f').contentWindow.postMessage({type:'streamlit:render',args:a},'*');
+</script></body></html>

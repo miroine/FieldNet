@@ -181,7 +181,9 @@ def solve_network(nodes, edges, *, x_scale="jac", max_nfev=3000, initial_guess=N
         return least_squares(residual,xs,max_nfev=int(nfev),xtol=1e-12,ftol=1e-12,gtol=1e-12,bounds=(lo,hi),x_scale=x_scale,jac_sparsity=sparsity)
     def _clip(v): return np.minimum(np.maximum(v,lo+1e-9*(np.abs(lo)+1)),hi-1e-9*(np.abs(hi)+1))
     budget=int(min(max_nfev,400+60*nvar))
-    best=_run(x0,budget)
+    # Short first pass: if it stalls, re-seeding the wells on their stable branch (below) is
+    # far cheaper than letting TRF crawl from a poor start.
+    best=_run(x0,int(min(budget,120+15*nvar)))
     # Branch selection (GAP convention): each producer must sit on the highest-rate stable
     # IPR/VLP intersection at its solved WHP; producers that can only trickle below their
     # minimum stable rate are shut in; otherwise, if the solve stalled, reseed the wells on

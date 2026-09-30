@@ -13,6 +13,8 @@ from optimization.integrated_v22 import optimize_integrated
 from optimization.calibration_v23 import Observation, calibrate
 from optimization.scenarios import run_sensitivity
 from ui.editor_component import network_editor
+from ui.graph_contract import (accept_canvas_payload, solve_status, current_results, run_solve, normalize_graph,
+                               UNSOLVED, SOLVING, SOLVED, FAILED)
 from ui.history import normalize_project
 from ui.topology import validate_topology, auto_layout
 from ui.widgets import synced_number, synced_slider, synced_select, synced_text, synced_checkbox, clean_num, clean_text, to_builtin
@@ -52,7 +54,12 @@ apply_theme(st,st.session_state.theme_name)
 st.markdown("<div class='fieldnet-brand'><h2>FieldNet v30 — Integrated Production Network</h2><p>Made by Merouane Hamdani · For non-commercial use · Independent engineering prototype</p></div>",unsafe_allow_html=True)
 st.caption('Equinor-inspired themes are unofficial and are not affiliated with, endorsed by, or sponsored by Equinor ASA. Validate engineering correlations before operational use.')
 if 'nodes' not in st.session_state: st.session_state.nodes,st.session_state.edges=demo_case()
-if 'results' not in st.session_state: st.session_state.results=None
+if 'solve' not in st.session_state: st.session_state.solve=None
+if 'layout_checked' not in st.session_state:
+    # Demo/imported cases often have every node at (0,0); lay them out once so the editor is usable.
+    if len({(n.get('x',0),n.get('y',0)) for n in st.session_state.nodes})<=1 and len(st.session_state.nodes)>1:
+        st.session_state.nodes=auto_layout(st.session_state.nodes,st.session_state.edges)
+    st.session_state.layout_checked=True
 PROFILE=st.session_state.unit_profile
 
 
@@ -75,32 +82,18 @@ def pick(label, options, key, format_func=str):
 
 
 def solved():
-    """Current results if they belong to the current case (non-empty and complete)."""
-    r=st.session_state.get('results')
-    if not r or not r[0]: return None
-    linked={x for e in st.session_state.edges for x in (e.get('source'),e.get('target'))}
-    ids={n['id'] for n in st.session_state.nodes if n['id'] in linked}; eids={e['id'] for e in st.session_state.edges if e.get('kind','pipeline') in LINK_TYPES}
-    if set(r[0])!=ids or set(r[1])!=eids: return None
-    return r
+    """Results for the *current* graph (graph-hash match), or None. See ui/graph_contract.py."""
+    return current_results(st.session_state)
 
 
-def invalidate():
-    st.session_state.results=None
+def reset_solve():
+    st.session_state.solve=None; st.session_state.pop('solve_request',None); st.session_state.pop('v21_warm_start',None)
 
 
-def do_solve():
-    try:
-        res=solve_v21(st.session_state.nodes,st.session_state.edges,warm_start=st.session_state.get('v21_warm_start'),attempts=3,
-                      enforce_constraints=bool(st.session_state.get('enforce_caps',True)))
-    except Exception as exc:
-        st.error(f'Solver error: {exc}'); return
-    st.session_state.results=res
-    p,q,info,d=res
-    if p:
-        st.session_state.v21_warm_start={'pressures':p,'flows':q,'well_rates':{k:v['liquid_rate_m3d'] for k,v in d.items()}}
-    if info.get('quality_gate')!='PASS':
-        msgs=[x['message'] for x in info.get('debug',[]) if x.get('severity')=='error'] or [info.get('message','')]
-        st.error('Solve did not pass the quality gate: '+' | '.join(str(m) for m in msgs[:4]))
+def request_solve():
+    """Mark the model SOLVING and rerun; the solve itself runs right after the editor has been
+    drawn with the SOLVING badge (see the Network tab)."""
+    st.session_state.solve_request=True; st.rerun()
 
 
 with st.sidebar:
@@ -113,35 +106,28 @@ with st.sidebar:
         if kind in ('water_source','gas_source'): pressure=180.0
         if kind in ('water_injector','gas_injector'): prm={'injection_fluid':'water' if kind=='water_injector' else 'gas','injectivity_m3d_bar':10.0,'reservoir_pressure_bar':200.0,'depth_m':2000.0,'available':True}
         n_existing=len(st.session_state.nodes)
-        st.session_state.nodes.append({'id':nid,'kind':kind,'name':name,'pressure_bar':pressure,'x':60+(n_existing%4)*200,'y':60+(n_existing//4)*120,'params':prm}); invalidate(); st.rerun()
-    st.divider(); st.subheader('Connect')
-    labels={n['id']:f"{n['name']} ({n['id']})" for n in st.session_state.nodes}
-    if len(labels)>=2:
-        s=st.selectbox('From',list(labels),format_func=labels.get); t=st.selectbox('To',list(labels),index=1,format_func=labels.get); link_kind=st.selectbox('Connection type',LINK_TYPES)
-        if st.button('Add connection',use_container_width=True,disabled=s==t):
-            st.session_state.edges.append({'id':str(uuid.uuid4())[:8],'source':s,'target':t,'kind':link_kind,'length_m':1000.0 if link_kind=='pipeline' else 0.0,'diameter_m':0.154,'roughness_m':4.5e-5,'elevation_change_m':0.0,'params':{'temperature_c':50.0,'water_cut':0.2,'gor_sm3sm3':100.0,'api':35.0,'gas_sg':0.75,'initial_rate_m3d':500.0,'correlation':'Beggs-Brill','cv':80.0,'shutoff_head_bar':35.0,'rated_rate_m3d':1500.0,'efficiency':0.75,'pressure_ratio':1.8,'max_discharge_bar':250.0,'map_enabled':False,'rated_gas_rate_sm3d':150000.0,'speed_fraction':1.0,'opening':1.0}}); invalidate(); st.rerun()
-    if st.button('Reset demo',use_container_width=True): st.session_state.nodes,st.session_state.edges=demo_case(); st.session_state.results=None; st.session_state.pop('v21_warm_start',None); st.rerun()
+        st.session_state.nodes.append({'id':nid,'kind':kind,'name':name,'pressure_bar':pressure,'x':60+(n_existing%4)*200,'y':60+(n_existing//4)*120,'params':prm}); st.rerun()
+    st.caption('Connect components in the editor: drag from an OUT port onto another component’s IN port.')
+    if st.button('Reset demo',use_container_width=True): st.session_state.nodes,st.session_state.edges=demo_case(); st.session_state.nodes=auto_layout(st.session_state.nodes,st.session_state.edges); reset_solve(); st.rerun()
 
 tab_net,tab_nodal,tab_diag,tab_fa,tab_results,tab_constraints,tab_ops,tab_cal,tab_forecast,tab_development,tab_dev26,tab_uncertainty,tab_rel,tab_res25,tab_io27,tab_qa28,tab_scen29=st.tabs(['Network','Nodal analysis','Hydraulic profiles','Flow assurance','Results','Constraints & equipment','Optimization & sensitivity','Calibration','Life-of-field','Field Development','Development Planning','Uncertainty','Reliability','Reservoir coupling','Data & interoperability','Model assurance','Scenarios'])
 with tab_net:
     canvas,props=st.columns([2.1,1])
     with canvas:
-        r_now=solved()
-        edit=network_editor(st.session_state.nodes, st.session_state.edges, r_now, key='network-v14')
-        # Streamlit replays a component's LAST value on every rerun. Only a new revision from
-        # the canvas is a real edit; applying stale values reverted every property-panel edit
-        # and deleted components added from the sidebar.
-        if isinstance(edit,dict) and edit.get('rev') and edit.get('rev')!=st.session_state.get('canvas_rev'):
-            st.session_state.canvas_rev=edit['rev']
-            if 'selected' in edit: st.session_state.selected=edit.get('selected')
-            if isinstance(edit.get('nodes'),list) and isinstance(edit.get('edges'),list):
-                incoming={'nodes':to_builtin(edit['nodes']),'edges':to_builtin(edit['edges'])}
-                current={'nodes':st.session_state.nodes,'edges':st.session_state.edges}
-                if json.dumps(incoming,sort_keys=True,default=str)!=json.dumps(current,sort_keys=True,default=str):
-                    topo_changed=json.dumps([(n['id'],n.get('kind')) for n in incoming['nodes']]+[(e['id'],e['source'],e['target']) for e in incoming['edges']])!=json.dumps([(n['id'],n.get('kind')) for n in current['nodes']]+[(e['id'],e['source'],e['target']) for e in current['edges']])
-                    st.session_state.nodes,st.session_state.edges=incoming['nodes'],incoming['edges']
-                    if topo_changed: invalidate()
-                    st.rerun()
+        status,status_msg=solve_status(st.session_state)
+        edit=network_editor(st.session_state.nodes, st.session_state.edges, solved(), key='network-v14',
+                            status=status, status_message=status_msg, selected=st.session_state.get('selected'))
+        # One contract (ui/graph_contract.py): only a new canvas revision is an edit; stale replays are ignored.
+        if accept_canvas_payload(st.session_state, edit)=='graph': st.rerun()
+        for msg in st.session_state.pop('graph_issues',[]) or []: st.warning(msg)
+        if st.session_state.pop('solve_request',False):
+            # The editor above has already been sent with the SOLVING badge.
+            with st.spinner('Solving network...'):
+                run_solve(st.session_state, solve_v21, warm_start=st.session_state.get('v21_warm_start'), attempts=3,
+                          enforce_constraints=bool(st.session_state.get('enforce_caps',True)))
+            st.rerun()
+        badge={UNSOLVED:'⚪',SOLVING:'🟡',SOLVED:'🟢',FAILED:'🔴'}[status]
+        st.markdown(f"**Model state:** {badge} {status}" + (f" — {status_msg}" if status_msg else ''))
         selected=st.session_state.get('selected')
         issues=validate_topology(st.session_state.nodes,st.session_state.edges)
         ca,cb=st.columns(2)
@@ -193,7 +179,7 @@ with tab_net:
             if cap>0: ep['max_rate_m3d']=cap
             else: ep.pop('max_rate_m3d',None)
             if st.button('Delete selected connection'):
-                st.session_state.edges=[x for x in st.session_state.edges if x['id']!=eid]; st.session_state.selected=None; invalidate(); st.rerun()
+                st.session_state.edges=[x for x in st.session_state.edges if x['id']!=eid]; st.session_state.selected=None; st.rerun()
         if sid:
             n=next(x for x in st.session_state.nodes if x['id']==sid); n['name']=synced_text(st,'Name',n['name'],'nm'+sid)
             p=n.setdefault('params',{})
@@ -232,7 +218,7 @@ with tab_net:
                 if mx>0: p['max_liquid_rate_m3d']=mx
                 else: p.pop('max_liquid_rate_m3d',None)
             if st.button('Delete selected node'):
-                st.session_state.nodes=[x for x in st.session_state.nodes if x['id']!=sid]; st.session_state.edges=[e for e in st.session_state.edges if e['source']!=sid and e['target']!=sid]; st.session_state.selected=None; invalidate(); st.rerun()
+                st.session_state.nodes=[x for x in st.session_state.nodes if x['id']!=sid]; st.session_state.edges=[e for e in st.session_state.edges if e['source']!=sid and e['target']!=sid]; st.session_state.selected=None; st.rerun()
     st.subheader('Flowlines / pipelines')
     if st.session_state.edges:
         rows=[]
@@ -249,12 +235,12 @@ with tab_net:
                 if v is not None: e.setdefault('params',{})[k]=v
     c0,c1,c2=st.columns([1.2,1,1])
     st.session_state.enforce_caps=c0.checkbox('Honour capacity limits (pro-rata well choking)',value=st.session_state.get('enforce_caps',True),help='Separator/export liquid capacities and connection max rates are enforced by choking upstream wells pro-rata, as a GAP-style constraint. Untick to only report violations.')
-    if c1.button('▶ Solve network',type='primary',use_container_width=True): do_solve()
+    if c1.button('▶ Solve network',type='primary',use_container_width=True,disabled=status==SOLVING): request_solve()
     payload=json.dumps(to_builtin({'version':'30','application':'FieldNet v30','storage_units':'canonical','display_unit_profile':PROFILE,'standard_conditions':STANDARD_CONDITIONS,'nodes':st.session_state.nodes,'edges':st.session_state.edges}),indent=2,default=str); c2.download_button('Export case JSON',payload,'fieldnet_v30_case.json','application/json',use_container_width=True)
     uploaded=st.file_uploader('Load FieldNet project JSON',type=['json'],key='project_upload')
     if uploaded is not None and st.button('Load project',use_container_width=True):
         try:
-            nn,ee=normalize_project(json.load(uploaded)); st.session_state.nodes,st.session_state.edges=to_builtin(nn),to_builtin(ee); st.session_state.results=None; st.session_state.pop('v21_warm_start',None); st.success('Project loaded'); st.rerun()
+            nn,ee=normalize_project(json.load(uploaded)); nn,ee,gi=normalize_graph(nn,ee); st.session_state.nodes,st.session_state.edges=(auto_layout(nn,ee) if len({(n['x'],n['y']) for n in nn})<=1 else nn),ee; reset_solve(); st.session_state.graph_issues=gi; st.success('Project loaded'); st.rerun()
         except Exception as exc: st.error(f'Invalid project: {exc}')
     r=solved()
     if r:
@@ -341,11 +327,11 @@ with tab_fa:
 with tab_results:
     r=solved()
     if not r:
-        last=st.session_state.get('results')
-        if last and not last[0]:
-            st.error('Last solve failed before producing a solution.')
-            for x in last[2].get('debug',[]): st.write(x.get('severity','').upper(),x.get('code',''),'—',x.get('message',''))
-        else: st.info('Solve the network to populate results (results are cleared when the topology changes).')
+        stt,msg=solve_status(st.session_state); rec=st.session_state.get('solve') or {}
+        if stt==FAILED:
+            st.error('Last solve failed before producing a solution: '+msg)
+            for x in ((rec.get('results') or ({},{},{},{}))[2] or {}).get('debug',[]): st.write(x.get('severity','').upper(),x.get('code',''),'—',x.get('message',''))
+        else: st.info(f'{stt}: {msg} Solve the network to populate results.')
     else:
         p,q,info,d=r; nm={n['id']:n['name'] for n in st.session_state.nodes}
         a,b,c,dcol=st.columns(4); a.metric('Converged','Yes' if info['success'] else 'No'); b.metric('Max residual',f"{info['max_abs_residual']:.2e}"); c.metric('Nodes',len(p)); dcol.metric('Connections',len(q))
@@ -386,7 +372,7 @@ with tab_constraints:
 with tab_ops:
     st.subheader('Network solver & debottlenecking')
     st.caption('Topology prechecks, warm starts, retry orchestration, physical residual reconstruction and equation-level failure diagnostics.')
-    if st.button('Run network solver',use_container_width=True): do_solve()
+    if st.button('Run network solver',use_container_width=True): request_solve()
     r=solved()
     if r:
         _p,_q,_i,_d=r
@@ -453,7 +439,7 @@ with tab_cal:
         st.dataframe(pd.DataFrame([{'parameter':k,'value':v,'std':(c.get('parameter_std') or {}).get(k),'at_bound':c['at_bounds'].get(k)} for k,v in c['values'].items()]),use_container_width=True)
         st.dataframe(pd.DataFrame([{'measurement':o.get('name') or o['target_id'],'kind':o['kind'],'observed':o['value'],'predicted':pv,'normalized_residual':rv} for o,pv,rv in zip(c['observations'],c['predicted'],c['normalized_residuals'])]),use_container_width=True)
         if st.button('Apply calibrated parameters to the case'):
-            st.session_state.nodes=to_builtin(c['calibrated_nodes']); st.session_state.edges=to_builtin(c['calibrated_edges']); invalidate(); st.success('Calibrated parameters applied. Re-solve the network.'); st.rerun()
+            st.session_state.nodes=to_builtin(c['calibrated_nodes']); st.session_state.edges=to_builtin(c['calibrated_edges']); st.success('Calibrated parameters applied. Re-solve the network.'); st.rerun()
         export={k:v for k,v in c.items() if k not in ('calibrated_nodes','calibrated_edges','solver_info')}
         st.download_button('Download calibration JSON',json.dumps(to_builtin(export),indent=2,default=str),'fieldnet_calibration.json','application/json',use_container_width=True)
 

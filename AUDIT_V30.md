@@ -66,3 +66,22 @@ Audit of FieldNet v29 (Streamlit GAP-style production network solver). All findi
 ## Files changed (main)
 
 `physics/well_model.py` (new), `solver/equations.py` (new), `ui/widgets.py` (new), `solver/steady_state.py` (rewritten), `solver/physical_audit.py`, `solver/v21.py`, `physics/vlp.py`, `physics/beggs_brill.py`, `physics/multiphase.py`, `physics/hydraulics.py`, `physics/choke.py`, `physics/controls.py`, `physics/well_performance_v20.py`, `network/forecast.py`, `network/coupled_forecast*.py`, `network/interchange_v27.py`, `physics/unit_system.py`, `optimization/debottleneck.py`, `solver/constraints.py`, `ui/*`, `app.py`, `ui/fieldnet_canvas/build/index.html`, `tests/test_v30_audit.py` (new).
+
+
+## v30.1 — Graph editor & editor→solver contract
+
+- **Drag-to-connect:** drag from a component's OUT port (right) and drop it on another component's IN port (left). Dropping anywhere on the target component also works. A dashed live line follows the cursor. A valid target's IN port turns green; a self-connection or duplicate turns it red and nothing is sent. Drops on empty space or Esc cancel the drag.
+- **Sidebar "Connect / Add connection" removed.** The editor is the only place connections are created. Connection type and parameters are still edited in the property panel.
+- **View is local to the editor:** zoom +/−, mouse wheel (zooms at the cursor), Fit, Reset and background-drag pan run entirely in the browser and send nothing to Streamlit, so there is no rerun. The view is kept across reruns, and a rerun arriving mid-drag is deferred until the gesture ends.
+- **One contract (`ui/graph_contract.py`, schema `fieldnet.graph/1`):**
+  - The editor sends `{schema, rev, nodes, edges, selected}`, and only for graph or selection edits.
+  - `accept_canvas_payload` ignores replayed revisions and runs `normalize_graph`, which drops dangling, self-loop and duplicate connections and fills palette defaults on new edges.
+  - `run_solve` is the single solver entry point. It stores the results tagged with a `graph_hash` of the solver-relevant model; positions and names are excluded from the hash.
+- **Explicit states, shown in the editor badge and under the editor:**
+  - **UNSOLVED:** never solved, or the model changed since the last solve. Any physics or topology edit makes the results stale; moving or renaming a component does not.
+  - **SOLVING:** the solve button marks the request, and the editor is redrawn with the SOLVING badge before the solver runs.
+  - **SOLVED:** passed the quality gate.
+  - **FAILED:** did not pass, with the reason shown. Solver exceptions also become FAILED, so the UI can never stay stuck in SOLVING.
+- **New model check `LOOP_ELEVATION_MISMATCH`:** elevation changes around a closed loop must sum to zero, otherwise hydrostatics drive a fictitious circulating flow.
+- **Solver:** the first solve pass is shorter, because re-seeding wells on their stable branch recovers faster from a poor start (a looped network went from 8 s to under 0.3 s).
+- **Tests:** 232 Python tests pass. `tests/browser/run_editor_browser_test.py` runs 20 real-Chromium checks of the editor (optional, needs Playwright).

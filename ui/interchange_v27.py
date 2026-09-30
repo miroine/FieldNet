@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import pandas as pd
+from ui.graph_contract import normalize_graph
 from network.interchange_v27 import export_tables, import_tables, export_project_package, import_project_package, package_sha256
 
 def render_interchange_v27(st,nodes,edges):
@@ -22,7 +23,7 @@ def render_interchange_v27(st,nodes,edges):
         r=st.session_state.v27_import
         if r['ok']:
             st.success(f"Validated {len(r['nodes'])} nodes and {len(r['edges'])} edges.")
-            if st.button('Apply validated import',type='primary',use_container_width=True): st.session_state.nodes=r['nodes']; st.session_state.edges=r['edges']; st.session_state.results=None; st.rerun()
+            if st.button('Apply validated import',type='primary',use_container_width=True): st.session_state.nodes,st.session_state.edges,_gi=normalize_graph(r['nodes'],r['edges']); st.session_state.solve=None; st.rerun()
         else: st.error('Import rejected. No project data were changed.')
         if r['issues']: st.dataframe(pd.DataFrame(r['issues']),hide_index=True,use_container_width=True)
     st.markdown('**Import FieldNet v29 package**')
@@ -34,6 +35,6 @@ def render_interchange_v27(st,nodes,edges):
         r=st.session_state.v27_pkg
         if r.get('ok'):
             st.json(r.get('manifest',{}))
-            if st.button('Apply validated package',type='primary',use_container_width=True): st.session_state.nodes=r['nodes']; st.session_state.edges=r['edges']; st.session_state.results=None; st.rerun()
+            if st.button('Apply validated package',type='primary',use_container_width=True): st.session_state.nodes,st.session_state.edges,_gi=normalize_graph(r['nodes'],r['edges']); st.session_state.solve=None; st.rerun()
         else: st.error('Package rejected. No project data were changed.')
         if r.get('issues'): st.dataframe(pd.DataFrame(r['issues']),hide_index=True,use_container_width=True)

@@ -155,5 +155,50 @@ def test_numpy_values_are_made_json_safe():
 
 def test_canvas_sends_revision_and_selection():
     text = (Path(__file__).parents[1] / 'ui/fieldnet_canvas/build/index.html').read_text()
-    assert 'rev:Date.now()' in text
-    assert 'selected=n.id;render();send()' in text
+    assert 'rev:Date.now()' in text and "schema:SCHEMA" in text
+    assert 'selected=m.id;render();send()' in text
+
+
+# ---------------- v30.1 editor -> solver contract ----------------
+from ui.graph_contract import (accept_canvas_payload, graph_hash, normalize_graph, solve_status, run_solve,
+                               current_results, UNSOLVED, SOLVED, FAILED, SOLVING, GRAPH_SCHEMA)
+
+
+def _state():
+    n, e = demo_case(); return {'nodes': n, 'edges': e}
+
+
+def test_contract_ignores_replayed_revision_and_applies_new_one():
+    s = _state(); n, e = copy.deepcopy(s['nodes']), copy.deepcopy(s['edges'])
+    e.append({'id': 'new', 'source': 'w2', 'target': 's1'})
+    pay = {'schema': GRAPH_SCHEMA, 'rev': 'r1', 'nodes': n, 'edges': e, 'selected': 'new'}
+    assert accept_canvas_payload(s, pay) == 'graph' and len(s['edges']) == 4
+    assert s['edges'][-1]['params']['water_cut'] == 0.2  # defaults filled for a drag-created edge
+    s['edges'].pop()  # e.g. property panel edit afterwards
+    assert accept_canvas_payload(s, pay) == 'ignored' and len(s['edges']) == 3
+
+
+def test_contract_drops_dangling_duplicate_and_self_loop_edges():
+    n, e = demo_case()
+    e += [{'id': 'x', 'source': 'w1', 'target': 'zzz'}, {'id': 'y', 'source': 'w1', 'target': 'w1'}, {'id': 'z', 'source': 'w1', 'target': 'm1'}]
+    nn, ee, issues = normalize_graph(n, e)
+    assert [x['id'] for x in ee] == ['fl1', 'fl2', 'trunk'] and len(issues) == 3
+
+
+def test_layout_changes_do_not_invalidate_results_but_physics_changes_do():
+    s = _state(); run_solve(s, solve_v21)
+    assert solve_status(s)[0] == SOLVED and current_results(s)
+    s['nodes'][0]['x'] = 500; s['nodes'][0]['name'] = 'Renamed'
+    assert solve_status(s)[0] == SOLVED
+    s['nodes'][0]['params']['reservoir_pressure_bar'] = 200
+    assert solve_status(s)[0] == UNSOLVED and current_results(s) is None
+
+
+def test_explicit_solving_and_failed_states():
+    s = _state(); s['solve_request'] = True
+    assert solve_status(s)[0] == SOLVING
+    s.pop('solve_request'); s['nodes'][3]['pressure_bar'] = None
+    rec = run_solve(s, solve_v21)
+    assert rec['status'] == FAILED and solve_status(s)[0] == FAILED and current_results(s) is None
+    def boom(*a, **k): raise RuntimeError('kaboom')
+    assert run_solve(_state(), boom)['status'] == FAILED

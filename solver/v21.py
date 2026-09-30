@@ -42,7 +42,30 @@ def topology_precheck(nodes, edges):
             issues.append({'severity':'warning','code':'NOT_CONNECTED','component':comp[0],'message':'Component has no connections; it is excluded from the network solve.'}); continue
         if not anchored: issues.append({'severity':'error','code':'UNANCHORED_COMPONENT','component':','.join(comp),'message':'Connected component has no pressure boundary/reservoir anchor.'})
     issues.extend(boundary_issues(nodes,[e for e in edges if e.get('source') in known and e.get('target') in known]))
+    issues.extend(loop_elevation_issues(nodes,[e for e in edges if e.get('source') in known and e.get('target') in known]))
     return issues
+
+def loop_elevation_issues(nodes, edges, tol_m=0.5):
+    """A closed loop must return to the same elevation. If the entered elevation changes
+    around a loop do not sum to zero the hydrostatics drive a fictitious circulating flow."""
+    try: import networkx as nx
+    except ImportError: return []
+    g=nx.MultiGraph(); dz={}
+    for e in edges:
+        if e.get('kind','pipeline') not in LINK_KINDS: continue
+        g.add_edge(e['source'],e['target'],key=e['id']); dz[e['id']]=(e['source'],e['target'],float(e.get('elevation_change_m') or 0.0) if e.get('kind','pipeline')=='pipeline' else 0.0)
+    out=[]
+    try: cycles=nx.cycle_basis(nx.Graph(g))
+    except Exception: return []
+    for cyc in cycles:
+        total=0.0; ok=True; ids=[]
+        for a,b in zip(cyc,cyc[1:]+cyc[:1]):
+            cand=[k for k,(s,t,_) in dz.items() if {s,t}=={a,b}]
+            if not cand: ok=False; break
+            s,t,h=dz[cand[0]]; total+=h if (s,t)==(a,b) else -h; ids.append(cand[0])
+        if ok and abs(total)>tol_m:
+            out.append({'severity':'warning','code':'LOOP_ELEVATION_MISMATCH','component':','.join(ids),'message':f"Elevation changes around loop {' → '.join(cyc+[cyc[0]])} sum to {total:+.1f} m instead of 0; this drives an artificial circulating flow. Check elevation_change_m."})
+    return out
 
 def _apply_warm_start(nodes, edges, warm):
     """Legacy helper kept for callers that relied on params-based warm starts."""
