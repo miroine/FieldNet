@@ -1,3 +1,27 @@
+# --- Stale-module guard -----------------------------------------------------------------
+# Streamlit Cloud re-runs app.py after a git pull but can keep previously imported project
+# modules cached. After an update spread over several commits, a new app.py then meets an
+# old module (ImportError: cannot import name ...). If any project source file changed since
+# the last run, drop the cached project modules so everything is imported fresh.
+import os as _os, sys as _sys
+_ROOT=_os.path.dirname(_os.path.abspath(globals().get('__file__') or 'app.py'))
+def _code_signature():
+    sig=[]
+    for _d,_,_fs in _os.walk(_ROOT):
+        if '.git' in _d or '__pycache__' in _d: continue
+        for _f in _fs:
+            if _f.endswith('.py'):
+                try: sig.append((_os.path.join(_d,_f),_os.path.getmtime(_os.path.join(_d,_f))))
+                except OSError: pass
+    return hash(tuple(sorted(sig)))
+_sig=_code_signature()
+if _sys.modules.get('_fieldnet_code_sig') is not None and getattr(_sys.modules['_fieldnet_code_sig'],'value',None)!=_sig:
+    for _name,_mod in list(_sys.modules.items()):
+        _file=getattr(_mod,'__file__',None) or ''
+        if _name!='__main__' and _file.startswith(_ROOT): del _sys.modules[_name]
+import types as _types
+_sys.modules['_fieldnet_code_sig']=_types.SimpleNamespace(value=_sig)
+# ------------------------------------------------------------------------------------------
 import json, uuid
 import numpy as np
 import pandas as pd
