@@ -58,17 +58,24 @@ def gas_lift_assist_bar(gas_injection_sm3d, depth_m, tubing_id_m, *, max_assist_
 def optimize_gas_lift(reservoir_pressure_bar, whp_bar, depth_m, tubing_id_m, *,
                       ipr_model='PI', pi_m3d_bar=10.0, qmax_m3d=1500.0,
                       max_injection_sm3d=60000.0, steps=31, **vlp_kwargs):
-    """Screen gas-lift rates and return the maximum stable nodal liquid rate."""
-    candidates=[]
+    """Screen gas-lift injection rates and return the maximum stable nodal liquid rate.
+
+    The injection gas is carried through the tubing multiphase calculation, so the
+    classic gas-lift performance curve (rising, flattening, then falling as friction
+    dominates) emerges from the physics.
+    """
+    vlp_kwargs=dict(vlp_kwargs); vlp_kwargs.pop('lift_type',None); vlp_kwargs.pop('gas_injection_sm3d',None)
+    candidates=[]; natural=None
     for inj in np.linspace(0,max(float(max_injection_sm3d),0.0),max(int(steps),2)):
-        assist=gas_lift_assist_bar(inj,depth_m,tubing_id_m)
         r=nodal_operating_point(reservoir_pressure_bar,whp_bar,depth_m,tubing_id_m,
-            ipr_model=ipr_model,pi_m3d_bar=pi_m3d_bar,qmax_m3d=qmax_m3d,lift_assist_bar=assist,**vlp_kwargs)
-        candidates.append({'gas_injection_sm3d':float(inj),'assist_bar':assist,**r})
+            ipr_model=ipr_model,pi_m3d_bar=pi_m3d_bar,qmax_m3d=qmax_m3d,lift_type='gas_lift',gas_injection_sm3d=float(inj),**vlp_kwargs)
+        if natural is None: natural=r
+        gain=(r['rate_m3d']-natural['rate_m3d']) if (r['converged'] and natural['converged']) else (r['rate_m3d'] if r['converged'] else 0.0)
+        candidates.append({'gas_injection_sm3d':float(inj),'incremental_liquid_m3d':float(gain),**{k:v for k,v in r.items() if k!='curve'}})
     feasible=[x for x in candidates if x['converged']]
     best=max(feasible,key=lambda x:x['rate_m3d']) if feasible else None
-    return {'model':'gas_lift_screening_v20','best':best,'candidates':candidates,
-            'limitations':['Screening optimization only; no valve-depth, injection-pressure or compressor-network model.']}
+    return {'model':'gas_lift_screening_v30','best':best,'candidates':candidates,
+            'limitations':['Screening optimisation only: injection gas is added above the injection depth; no valve spacing, casing-pressure or compressor-network model.']}
 
 
 def esp_head_bar(rate_m3d, *, rated_rate_m3d=1000.0, shutoff_head_bar=120.0,
@@ -103,15 +110,24 @@ def esp_performance(rate_m3d, *, rated_rate_m3d=1000.0, shutoff_head_bar=120.0,
 
 
 def vlp_bhp_with_lift(rate_m3d, whp_bar, depth_m, tubing_id_m, *, vlp_model='Beggs-Brill',
-                      lift_type='none', gas_injection_sm3d=0.0, esp=None, lift_assist_bar=0.0, **kwargs):
+                      lift_type='none', gas_injection_sm3d=0.0, esp=None, lift_assist_bar=0.0,
+                      gas_injection_depth_m=None, **kwargs):
+    """Tubing BHP including artificial lift.
+
+    Gas lift is modelled physically: the injection gas is added as free gas in the
+    tubing above the injection depth, so the lift benefit follows from the multiphase
+    correlation (including the friction penalty at high injection rates) instead of an
+    arbitrary 'assist' pressure. ESP head is subtracted at the pump (bottom of tubing).
+    """
     corr='Beggs-Brill' if str(vlp_model).lower().startswith('beggs') else 'Homogeneous'
-    natural,props=tubing_bhp_bar(rate_m3d,whp_bar,depth_m,tubing_id_m,correlation=corr,**kwargs)
-    lt=str(lift_type).lower(); assist=max(float(lift_assist_bar),0.0); lift_detail={'type':lt}
-    if lt in ('gas_lift','gas lift'):
-        assist=max(assist,gas_lift_assist_bar(gas_injection_sm3d,depth_m,tubing_id_m))
-        lift_detail.update({'gas_injection_sm3d':float(gas_injection_sm3d),'assist_bar':assist})
+    lt=str(lift_type).lower().replace(' ','_'); gl=max(float(gas_injection_sm3d),0.0) if lt=='gas_lift' else 0.0
+    natural,props=tubing_bhp_bar(rate_m3d,whp_bar,depth_m,tubing_id_m,correlation=corr,extra_gas_sm3d=gl,
+                                 gas_injection_depth_m=gas_injection_depth_m,**kwargs)
+    assist=max(float(lift_assist_bar),0.0); lift_detail={'type':lt}
+    if lt=='gas_lift':
+        lift_detail.update({'gas_injection_sm3d':gl,'model':'injection gas added to tubing flow above injection depth','assist_bar':assist})
     elif lt=='esp':
-        ep=esp_performance(rate_m3d,**(esp or {})); assist=max(assist,ep['head_bar']); lift_detail.update(ep); lift_detail['assist_bar']=assist
+        ep=esp_performance(rate_m3d,**(esp or {})); assist=assist+ep['head_bar']; lift_detail.update(ep); lift_detail['assist_bar']=assist
     return max(natural-assist,0.0),props,lift_detail
 
 

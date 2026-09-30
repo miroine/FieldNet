@@ -95,7 +95,9 @@ STANDARD_CONDITIONS={
 PROJECT_FIELD_QUANTITIES = {
  'pressure_bar':'pressure','reservoir_pressure_bar':'pressure','initial_pressure_bar':'pressure','min_pressure_bar':'pressure','max_pressure_bar':'pressure','min_bhp_bar':'pressure','lift_assist_bar':'pressure','shutoff_head_bar':'pressure','min_head_bar':'pressure','max_discharge_bar':'pressure',
  'length_m':'length','depth_m':'length','elevation_change_m':'length','diameter_m':'diameter','tubing_id_m':'diameter',
- 'temperature_c':'temperature','pi_m3d_bar':'pi','qmax_m3d':'liquid_rate','initial_rate_m3d':'liquid_rate','rated_rate_m3d':'liquid_rate','gor_sm3sm3':'gor','rated_gas_rate_sm3d':'gas_rate','rho_kgm3':'density'
+ 'temperature_c':'temperature','bottomhole_temperature_c':'temperature','ambient_temperature_c':'temperature','wax_appearance_temperature_c':'temperature',
+ 'pi_m3d_bar':'pi','qmax_m3d':'liquid_rate','initial_rate_m3d':'liquid_rate','rated_rate_m3d':'liquid_rate','max_liquid_rate_m3d':'liquid_rate','max_rate_m3d':'liquid_rate','min_rate_m3d':'liquid_rate','esp_rated_rate_m3d':'liquid_rate',
+ 'esp_shutoff_head_bar':'pressure','gas_lift_depth_m':'length','gor_sm3sm3':'gor','rated_gas_rate_sm3d':'gas_rate','gas_lift_injection_sm3d':'gas_rate','rho_kgm3':'density','fluid_density_kgm3':'density'
 }
 _TO={'pressure':pressure_to_display,'temperature':temperature_to_display,'length':length_to_display,'diameter':diameter_to_display,'liquid_rate':liquid_rate_to_display,'gas_rate':gas_rate_to_display,'gor':gor_to_display,'density':density_to_display,'power':power_to_display,'pi':pi_to_display}
 _FROM={'pressure':pressure_from_display,'temperature':temperature_from_display,'length':length_from_display,'diameter':diameter_from_display,'liquid_rate':liquid_rate_from_display,'gas_rate':gas_rate_from_display,'gor':gor_from_display,'density':density_from_display,'power':power_from_display,'pi':pi_from_display}

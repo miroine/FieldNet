@@ -3,8 +3,8 @@ import math
 
 def control_valve_dp_bar(q_m3d, cv, rho_kgm3=850.0, opening=1.0):
     eff=max(float(cv)*max(min(float(opening),1.0),0.01),1e-6)
-    q_m3h=abs(float(q_m3d))/24.0
-    return (q_m3h/eff)**2 * max(float(rho_kgm3),1.0)/1000.0
+    q_m3h=float(q_m3d)/24.0
+    return (q_m3h*abs(q_m3h)/(eff*eff)) * max(float(rho_kgm3),1.0)/1000.0
 
 def compressor_map_ratio(q_gas_sm3d, rated_rate_sm3d, design_ratio, speed_fraction=1.0, min_ratio=1.0):
     """Simple normalized compressor map surrogate for screening studies."""

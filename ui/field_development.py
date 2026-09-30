@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.express as px
 
 from network.field_development import DevelopmentEvent, DevelopmentScenario, run_development_scenarios
+from ui.widgets import clean_text
 
 EVENT_COLUMNS = ["date", "target_id", "field", "value", "description"]
 
@@ -16,9 +17,17 @@ EVENT_COLUMNS = ["date", "target_id", "field", "value", "description"]
 def parse_event_rows(rows: list[dict[str, Any]]) -> list[DevelopmentEvent]:
     events: list[DevelopmentEvent] = []
     for row in rows:
-        if not row.get("date") or not row.get("target_id") or not row.get("field"):
-            continue
-        events.append(DevelopmentEvent(str(row["date"]), str(row["target_id"]), str(row["field"]), row.get("value"), str(row.get("description") or "")))
+        d, tid, fld = clean_text(row.get("date")), clean_text(row.get("target_id")), clean_text(row.get("field"))
+        if not d or not tid or not fld:
+            continue  # blank editor rows arrive as NaN, which is truthy; skip them explicitly
+        try:
+            d = pd.Timestamp(d).date().isoformat()
+        except Exception as exc:
+            raise ValueError(f"Invalid event date {d!r}") from exc
+        val = row.get("value")
+        if not isinstance(val, (list, dict)) and pd.isna(val):
+            val = None
+        events.append(DevelopmentEvent(d, tid, fld, val, clean_text(row.get("description"))))
     return events
 
 
@@ -84,7 +93,10 @@ def render_field_development(st, nodes: list[dict], edges: list[dict]) -> None:
         multipliers[name] = cols[i % len(cols)].number_input(f"{name} decline multiplier", 0.0, 10.0, float(default), 0.05, key=f"v16_mult_{i}")
 
     if st.button("▶ Run v16 development scenarios", type="primary", use_container_width=True):
-        events = parse_event_rows(event_df.to_dict("records"))
+        try:
+            events = parse_event_rows(event_df.to_dict("records"))
+        except ValueError as exc:
+            st.error(str(exc)); events = None
         scenarios = []
         for name in names:
             dep = {}
@@ -96,8 +108,12 @@ def render_field_development(st, nodes: list[dict], edges: list[dict]) -> None:
                     "min_reservoir_pressure_bar": float(prm.get("min_reservoir_pressure_bar", 20.0)),
                 }
             scenarios.append(DevelopmentScenario(name=name, start_date=start, years=float(years), step_days=int(step), events=events, depletion=dep))
-        with st.spinner("Running v16 development scenarios..."):
-            st.session_state.v16_results = run_development_scenarios(nodes, edges, scenarios)
+        if events is not None:
+            with st.spinner("Running development scenarios..."):
+                try:
+                    st.session_state.v16_results = run_development_scenarios(nodes, edges, scenarios)
+                except Exception as exc:
+                    st.error(f"Development scenarios failed: {exc}")
 
     results = st.session_state.get("v16_results")
     if not results:
@@ -106,10 +122,11 @@ def render_field_development(st, nodes: list[dict], edges: list[dict]) -> None:
     st.markdown("### Scenario comparison")
     st.dataframe(summary_df, hide_index=True, use_container_width=True)
     if not summary_df.empty:
-        best = summary_df.iloc[0]
+        base_rows = summary_df[summary_df["Scenario"].str.lower() == "base"]
+        best = (base_rows if not base_rows.empty else summary_df).iloc[0]
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Scenarios", len(summary_df)); m2.metric("Base cumulative oil", f"{best['Cumulative oil [m3]']/1e6:.3f} MMm³")
-        m3.metric("Base convergence", f"{best['Convergence [%]']:.1f}%"); m4.metric("Base constraint events", int(best["Constraint events"]))
+        m1.metric("Scenarios", len(summary_df)); m2.metric(f"{best['Scenario']} cumulative oil", f"{best['Cumulative oil [m3]']/1e6:.3f} MMm³")
+        m3.metric(f"{best['Scenario']} convergence", f"{best['Convergence [%]']:.1f}%"); m4.metric(f"{best['Scenario']} constraint events", int(best["Constraint events"]))
     if not field_df.empty:
         st.plotly_chart(px.line(field_df, x="Date", y="Oil [m3/d]", color="Scenario", title="Oil production by development scenario"), use_container_width=True)
         st.plotly_chart(px.line(field_df, x="Date", y="Total liquid [m3/d]", color="Scenario", title="Liquid production by development scenario"), use_container_width=True)

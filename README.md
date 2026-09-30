@@ -1,3 +1,7 @@
+# FieldNet v30 — Integrated Production Network (audit & bug-fix release)
+
+v30 is an audit release of v29: corrected well/VLP physics and network kernel, GAP-style well and capacity constraints, canvas/property-panel synchronisation fixes and NaN-safe data editors. See **AUDIT_V30.md** for every finding and fix.
+
 # FieldNet v29 — Development Planning
 
 Production-only integrated network/forecast/uncertainty simulator with v19 flow-assurance screening. Economics is intentionally excluded. See `FLOW_ASSURANCE_V19.md` and `UNIT_SYSTEMS.md`.

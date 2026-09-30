@@ -2,6 +2,21 @@ import copy
 from datetime import datetime
 from solver.steady_state import solve_network
 
+
+def solve_step(nodes, edges, guess=None, enforce_constraints=False):
+    """One forecast timestep: warm-started from the previous step and, optionally,
+    honouring facility capacity limits by pro-rata well choking."""
+    if enforce_constraints:
+        from solver.v21 import enforce_capacity_constraints
+        (p,q,info,d),_,actions=enforce_capacity_constraints(nodes,edges,lambda ns,es,g: solve_network(ns,es,initial_guess=g),initial_guess=guess)
+        info=dict(info); info['constraint_actions']=actions
+        return p,q,info,d
+    return solve_network(nodes,edges,initial_guess=guess)
+
+
+def next_guess(p,q,info):
+    return {'pressures':p,'flows':q,'well_rates':info.get('well_rates',{})}
+
 DAYS_PER_YEAR=365.25
 
 def _days(date0,date1):
@@ -19,8 +34,8 @@ def apply_events(nodes, edges, events, date):
         else: obj[field]=value
     return n,e
 
-def run_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, depletion=None):
-    base=copy.deepcopy(nodes); dep=depletion or {}; state={}
+def run_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, depletion=None, enforce_constraints=False):
+    base=copy.deepcopy(nodes); dep=depletion or {}; state={}; guess=None
     for n in base:
         if n['kind']=='well':
             p=n.get('params',{}); state[n['id']]={'pr':float(p.get('reservoir_pressure_bar',200.0)),'cum_liq':0.0}
@@ -34,7 +49,7 @@ def run_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, d
             if n['kind']=='well' and n['id'] in state:
                 n.setdefault('params',{})['reservoir_pressure_bar']=state[n['id']]['pr']
                 if not n['params'].get('available',True): n['params']['pi_m3d_bar']=0.0
-        try: result=solve_network(nn,ee); p,q,info,details=result
+        try: result=solve_step(nn,ee,guess,enforce_constraints); p,q,info,details=result; guess=next_guess(p,q,info)
         except Exception as exc:
             rows.append({'Date':date,'Day':t,'Total liquid [m3/d]':0.0,'Oil [m3/d]':0.0,'Water [m3/d]':0.0,'Gas [Sm3/d]':0.0,'Cumulative liquid [m3]':sum(s['cum_liq'] for s in state.values()),'Violations':0,'Converged':False,'Message':str(exc)}); t+=step_days; continue
         tl=oil=wat=gas=0.0

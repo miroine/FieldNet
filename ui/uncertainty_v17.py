@@ -5,20 +5,25 @@ import pandas as pd
 import plotly.express as px
 from network.field_development import DevelopmentScenario
 from network.uncertainty import UncertainParameter, MonteCarloConfig, run_monte_carlo
+from ui.widgets import clean_num, clean_text
 
 PARAM_COLS=['name','target_id','path','operation','distribution','low','mode','high','mean','std','physical_min','physical_max','bound_policy']
 def parse_uncertainty_rows(rows):
+    """Blank data-editor cells arrive as NaN; ``float(r.get('low',0.8))`` then yields NaN
+    (the default is only used when the column is missing) and ``physical_max=NaN`` silently
+    disabled every bound check. Clean every cell explicitly."""
     out=[]
     for r in rows:
-        if not r.get('name') or not r.get('path'): continue
-        out.append(UncertainParameter(name=str(r['name']),target_id=(str(r['target_id']) if r.get('target_id') else None),path=str(r['path']),operation=str(r.get('operation') or 'multiply'),distribution=str(r.get('distribution') or 'triangular'),low=float(r.get('low',0.8)),mode=float(r.get('mode',1.0)),high=float(r.get('high',1.2)),mean=float(r.get('mean',1.0)),std=float(r.get('std',0.1)),physical_min=(float(r['physical_min']) if r.get('physical_min') not in (None,'') else None),physical_max=(float(r['physical_max']) if r.get('physical_max') not in (None,'') else None),bound_policy=str(r.get('bound_policy') or 'clip')))
+        name=clean_text(r.get('name')); path=clean_text(r.get('path'))
+        if not name or not path: continue
+        out.append(UncertainParameter(name=name,target_id=(clean_text(r.get('target_id')) or None),path=path,operation=clean_text(r.get('operation'),'multiply'),distribution=clean_text(r.get('distribution'),'triangular'),low=clean_num(r.get('low'),0.8),mode=clean_num(r.get('mode'),1.0),high=clean_num(r.get('high'),1.2),mean=clean_num(r.get('mean'),1.0),std=clean_num(r.get('std'),0.1),physical_min=clean_num(r.get('physical_min')),physical_max=clean_num(r.get('physical_max')),bound_policy=clean_text(r.get('bound_policy'),'clip')))
     return out
 
 def export_mc_csv(result): return pd.DataFrame(result.get('runs',[])).to_csv(index=False)
 def export_mc_json(result): return json.dumps(result,indent=2,default=str)
 
 def render_uncertainty(st,nodes,edges):
-    st.subheader('v19 Uncertainty, Monte Carlo & Risk')
+    st.subheader('Uncertainty, Monte Carlo & Risk')
     st.caption('Planning-level probabilistic wrapper around the deterministic production engine. P90 is conservative and P10 optimistic for production/reserves-style metrics. Samples are reproducible from the displayed seed.')
     c1,c2,c3,c4=st.columns(4)
     start=c1.date_input('MC start date',key='v17_start').isoformat(); years=c2.number_input('MC horizon [years]',0.03,50.0,1.0,0.5,key='v17_years'); step=c3.selectbox('MC timestep [days]',[10,30,60,90],index=1,key='v17_step'); samples=c4.number_input('Samples',5,1000,50,5,key='v17_samples')

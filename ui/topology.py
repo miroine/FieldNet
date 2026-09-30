@@ -1,7 +1,10 @@
 from collections import defaultdict, deque
 
-VALID_KINDS={'well','manifold','separator','sink'}
-VALID_EDGE_KINDS={'pipeline','choke','pump','compressor'}
+# Must match every component the palette can create; control_valve was missing, so every
+# valve was reported as a topology *error*.
+VALID_KINDS={'well','manifold','separator','separator_stage','sink','reservoir','water_source','gas_source','water_injector','gas_injector','injector','oil_export','gas_export','water_disposal'}
+VALID_EDGE_KINDS={'pipeline','choke','control_valve','pump','compressor'}
+BOUNDARY_KINDS={'sink','separator','separator_stage','oil_export','gas_export','water_disposal'}
 
 def validate_topology(nodes, edges):
     issues=[]; ids={n['id'] for n in nodes}; incoming=defaultdict(int); outgoing=defaultdict(int)
@@ -14,7 +17,7 @@ def validate_topology(nodes, edges):
     for n in nodes:
         if n.get('kind') not in VALID_KINDS: issues.append({'severity':'warning','message':f"{n.get('name')} has unknown component type"})
         if n.get('kind')=='well' and incoming[n['id']]: issues.append({'severity':'warning','message':f"Well {n['name']} has an incoming connection"})
-        if n.get('kind') in ('sink','separator') and outgoing[n['id']]: issues.append({'severity':'warning','message':f"Boundary {n['name']} has an outgoing connection"})
+        if n.get('kind') in BOUNDARY_KINDS and outgoing[n['id']] and n.get('pressure_bar') is not None: issues.append({'severity':'warning','message':f"Fixed-pressure boundary {n['name']} has an outgoing connection"})
         if incoming[n['id']]+outgoing[n['id']]==0: issues.append({'severity':'warning','message':f"{n['name']} is disconnected"})
     return issues
 

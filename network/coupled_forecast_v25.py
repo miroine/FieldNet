@@ -6,14 +6,15 @@ from network.reservoir import tank_from_dict
 from network.reservoir_v25 import (AquiferSpec, CommunicationLink, InjectorConnection,
     allocate_connected_injection, step_coupled_tanks, validate_model)
 from solver.steady_state import solve_network
+from network.forecast import solve_step, next_guess
 
 
 def run_coupled_forecast_v25(nodes, edges, tanks, well_to_tank, start_date, years=5, step_days=30,
                              events=None, injector_schedule=None, injector_connections=(),
-                             aquifers=(), communication_links=(), facility_capacity_m3d=None):
+                             aquifers=(), communication_links=(), facility_capacity_m3d=None, enforce_constraints=False):
     base=copy.deepcopy(nodes); ts={t['id']:tank_from_dict(copy.deepcopy(t)) for t in tanks}
     validate_model(ts,aquifers,communication_links,injector_connections)
-    field=[]; wells=[]; tank_rows=[]; transfers=[]; constraints=[]; tday=0
+    field=[]; wells=[]; tank_rows=[]; transfers=[]; constraints=[]; tday=0; guess=None
     end_days=float(years)*DAYS_PER_YEAR
     while tday < end_days-1e-12:
         dt=min(float(step_days),end_days-tday)
@@ -24,7 +25,7 @@ def run_coupled_forecast_v25(nodes, edges, tanks, well_to_tank, start_date, year
             if n.get('kind')=='well' and tid in ts:
                 n.setdefault('params',{})['reservoir_pressure_bar']=ts[tid].pressure_bar
                 if not n['params'].get('available',True): n['params']['pi_m3d_bar']=0.0
-        try: p,q,info,details=solve_network(nn,ee)
+        try: p,q,info,details=solve_step(nn,ee,guess,enforce_constraints); guess=next_guess(p,q,info)
         except Exception as exc:
             field.append({'Date':date,'Day':tday,'dt_days':dt,'Total liquid [m3/d]':0.0,'Converged':False,'Message':str(exc)}); tday+=dt; continue
         wd={k:0.0 for k in ts}; tl=oil=wat=gas=0.0

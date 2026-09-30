@@ -44,7 +44,10 @@ def validate_project(nodes:list[dict], edges:list[dict])->list[dict]:
         eids.add(eid)
         for f in ('source','target'):
             if e.get(f) not in valid: issues.append({'table':'edges','row':i,'field':f,'severity':'error','message':f'unknown node {e.get(f)}'})
-        for f in ('length_m','diameter_m'):
+        # Only pipelines need a physical length; chokes/valves/pumps/compressors are created
+        # with length_m=0, which previously made every such case fail export/snapshot.
+        needed=('length_m','diameter_m') if e.get('kind','pipeline')=='pipeline' else ()
+        for f in needed:
             try:
                 if float(e.get(f,0)) <= 0: issues.append({'table':'edges','row':i,'field':f,'severity':'error','message':f'{f} must be > 0'})
             except Exception: issues.append({'table':'edges','row':i,'field':f,'severity':'error','message':f'{f} must be numeric'})

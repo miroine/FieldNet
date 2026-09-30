@@ -4,36 +4,41 @@ from datetime import datetime, timedelta
 from network.forecast import apply_events, DAYS_PER_YEAR
 from network.reservoir import tank_from_dict, update_tank, allocate_injection
 from solver.steady_state import solve_network
+from network.forecast import solve_step, next_guess
 
-def _cap_availability(nodes, facility_capacity_m3d=None):
-    wells=[n for n in nodes if n.get('kind')=='well' and n.get('params',{}).get('available',True)]
-    if facility_capacity_m3d is None or not wells: return
-    potential=sum(max(float(n.get('params',{}).get('pi_m3d_bar',0.0)),0.0) for n in wells)
-    if potential<=0: return
-    factor=min(1.0,max(float(facility_capacity_m3d),0.0)/potential)
-    for n in wells: n.setdefault('params',{})['availability_factor']=min(float(n['params'].get('availability_factor',1.0)),factor)
+def _capacity_factor(nodes, details, facility_capacity_m3d=None):
+    """Pro-rata factor so total liquid honours the facility capacity.
+
+    The previous version compared the capacity [m3/d] with the *sum of well PIs*
+    [m3/d/bar] - a units error that throttled or ignored the limit arbitrarily."""
+    if facility_capacity_m3d is None: return 1.0
+    tot=0.0
+    for n in nodes:
+        if n.get('kind')=='well' and n['id'] in details:
+            tot+=max(float(details[n['id']]['liquid_rate_m3d']),0.0)*max(0,min(float(n.get('params',{}).get('availability_factor',1.0)),1))
+    return 1.0 if tot<=0 else min(1.0,max(float(facility_capacity_m3d),0.0)/tot)
 
 def run_coupled_forecast(nodes, edges, tanks, well_to_tank, start_date, years=5, step_days=30,
                          events=None, injection_schedule=None, injection_weights=None,
-                         facility_capacity_m3d=None):
+                         facility_capacity_m3d=None, enforce_constraints=False):
     """Resolve the network at each step while independently updating mapped reservoir tanks."""
     base=copy.deepcopy(nodes); ts={t['id']:tank_from_dict(t) for t in copy.deepcopy(tanks)}
-    field=[]; wells=[]; tank_rows=[]; constraints=[]; tday=0
+    field=[]; wells=[]; tank_rows=[]; constraints=[]; tday=0; guess=None
     while tday <= int(years*DAYS_PER_YEAR):
         date=(datetime.fromisoformat(str(start_date))+timedelta(days=tday)).date().isoformat()
-        nn,ee=apply_events(base,edges,events,date); _cap_availability(nn,facility_capacity_m3d)
+        nn,ee=apply_events(base,edges,events,date)
         for n in nn:
             tid=well_to_tank.get(n['id'])
             if n.get('kind')=='well' and tid in ts:
                 n.setdefault('params',{})['reservoir_pressure_bar']=ts[tid].pressure_bar
                 if not n['params'].get('available',True): n['params']['pi_m3d_bar']=0.0
-        try: p,q,info,details=solve_network(nn,ee)
+        try: p,q,info,details=solve_step(nn,ee,guess,enforce_constraints); guess=next_guess(p,q,info)
         except Exception as exc:
             field.append({'Date':date,'Day':tday,'Total liquid [m3/d]':0.0,'Oil [m3/d]':0.0,'Water [m3/d]':0.0,'Gas [Sm3/d]':0.0,'Converged':False,'Message':str(exc)}); tday+=step_days; continue
-        withdrawals={k:0.0 for k in ts}; tl=oil=wat=gas=0.0
+        withdrawals={k:0.0 for k in ts}; tl=oil=wat=gas=0.0; cap_f=_capacity_factor(nn,details,facility_capacity_m3d)
         for n in nn:
             if n.get('kind')!='well' or n['id'] not in details: continue
-            d=details[n['id']]; prm=n.get('params',{}); rate=max(float(d['liquid_rate_m3d']),0.0)*max(0,min(float(prm.get('availability_factor',1.0)),1))
+            d=details[n['id']]; prm=n.get('params',{}); rate=max(float(d['liquid_rate_m3d']),0.0)*max(0,min(float(prm.get('availability_factor',1.0)),1))*cap_f
             wc=float(prm.get('water_cut',0.0)); o=rate*(1-wc); w=rate*wc; g=o*float(prm.get('gor_sm3sm3',0.0)); tl+=rate; oil+=o; wat+=w; gas+=g
             tid=well_to_tank.get(n['id']);
             if tid in withdrawals: withdrawals[tid]+=rate*step_days
