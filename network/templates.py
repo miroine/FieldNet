@@ -148,7 +148,7 @@ def subsea_compressor_gas():
     n = [gas_tank('G1', 'GAS-FIELD', pr=300.0, t=110.0, giip=90e9, min_pressure_bar=30.0)]
     n += [gas_well(f'W{i}', f'SUBSEA-{i}', 'G1', depth_m=3200.0, gas_c_sm3d_bar2n=70.0, reservoir_pressure_bar=300.0) for i in range(1, 5)]
     n += [manifold('M1', 'SUBSEA MANIFOLD'), manifold('M2', 'COMPRESSOR DISCHARGE'), separator('HOST', 'ONSHORE PLANT', 70.0, max_gas_rate_sm3d=14e6)]
-    e = [pipe(f'FL{i}', f'W{i}', 'M1', 1000, 0.15, 0, **PIPE_GAS) for i in range(1, 5)] + [compressor('SUBSEA-COMP', 'M1', 'M2', ratio=2.2, gor=1e5, max_discharge=140.0), pipe('TIEBACK', 'M2', 'HOST', 60000, 0.4, 0, **PIPE_GAS)]
+    e = [pipe(f'FL{i}', f'W{i}', 'M1', 1000, 0.15, 0, **PIPE_GAS) for i in range(1, 5)] + [compressor('SUBSEA-COMP', 'M1', 'M2', ratio=2.2, gor=5e5, max_discharge=140.0), pipe('TIEBACK', 'M2', 'HOST', 60000, 0.4, 0, **PIPE_GAS)]
     return _finish(n, e)
 
 
@@ -157,7 +157,7 @@ def topside_compressor_gas():
     n = [gas_tank('G1', 'GAS-FIELD', pr=220.0, t=95.0, giip=70e9, min_pressure_bar=15.0)]
     n += [gas_well(f'W{i}', f'WELL-{i}', 'G1', depth_m=3000.0, gas_c_sm3d_bar2n=60.0, reservoir_pressure_bar=220.0) for i in range(1, 6)]
     n += [manifold('M1', 'INLET MANIFOLD'), manifold('M2', 'COMPRESSOR DISCHARGE'), separator('EXP', 'EXPORT METERING (pipeline pressure)', 90.0, max_gas_rate_sm3d=12e6)]
-    e = [pipe(f'FL{i}', f'W{i}', 'M1', 2500, 0.15, 0, **PIPE_GAS) for i in range(1, 6)] + [compressor('EXP-COMP', 'M1', 'M2', ratio=3.0, gor=1e5, max_discharge=130.0), pipe('EXPORT', 'M2', 'EXP', 3000, 0.3, 0, **PIPE_GAS)]
+    e = [pipe(f'FL{i}', f'W{i}', 'M1', 2500, 0.15, 0, **PIPE_GAS) for i in range(1, 6)] + [compressor('EXP-COMP', 'M1', 'M2', ratio=3.0, gor=5e5, max_discharge=130.0), pipe('EXPORT', 'M2', 'EXP', 3000, 0.3, 0, **PIPE_GAS)]
     return _finish(n, e)
 
 
@@ -232,7 +232,7 @@ def onshore_gas_gathering():
     n += [gas_well(f'B{i}', f'B-{i}', 'G2', depth_m=2000.0, gas_c_sm3d_bar2n=35.0, reservoir_pressure_bar=140.0, tubing_id_m=0.0889) for i in range(1, 5)]
     n += [manifold('MA', 'CLUSTER-A HEADER'), manifold('MB', 'CLUSTER-B HEADER'), manifold('MC', 'GATHERING HEADER'), manifold('MD', 'STATION DISCHARGE'), separator('SALES', 'SALES GAS METERING', 70.0, max_gas_rate_sm3d=6e6)]
     e = [pipe(f'FA{i}', f'A{i}', 'MA', 1200, 0.1, 0, **PIPE_GAS) for i in range(1, 5)] + [pipe(f'FB{i}', f'B{i}', 'MB', 1200, 0.1, 0, **PIPE_GAS) for i in range(1, 5)]
-    e += [pipe('GA', 'MA', 'MC', 6000, 0.25, 0, **PIPE_GAS), pipe('GB', 'MB', 'MC', 9000, 0.25, 0, **PIPE_GAS), compressor('FIELD-COMP', 'MC', 'MD', ratio=4.0, gor=1e5, max_discharge=100.0), pipe('SALES-LINE', 'MD', 'SALES', 8000, 0.3, 0, **PIPE_GAS)]
+    e += [pipe('GA', 'MA', 'MC', 6000, 0.25, 0, **PIPE_GAS), pipe('GB', 'MB', 'MC', 9000, 0.25, 0, **PIPE_GAS), compressor('FIELD-COMP', 'MC', 'MD', ratio=4.0, gor=5e5, max_discharge=100.0), pipe('SALES-LINE', 'MD', 'SALES', 8000, 0.3, 0, **PIPE_GAS)]
     return _finish(n, e)
 
 

@@ -215,9 +215,27 @@ def run_solve(state, solver, **kwargs):
     nodes, edges = solver_input(state.get('nodes', []), state.get('edges', []))
     try:
         p, q, info, d = solver(nodes, edges, **kwargs)
+        # A warm start from an earlier operating point can trap the solver; if it did not converge, retry from scratch and keep the better result.
+        if kwargs.get('warm_start') and not (bool(p) and info.get('quality_gate') == 'PASS'):
+            kw2 = dict(kwargs); kw2['warm_start'] = None
+            try:
+                r2 = solver(nodes, edges, **kw2)
+                if bool(r2[0]) and (r2[2].get('quality_gate') == 'PASS' or float(r2[2].get('max_abs_residual', 1e9)) < float(info.get('max_abs_residual', 1e9))): p, q, info, d = r2
+            except Exception: pass
     except Exception as exc:  # never leave the UI stuck in SOLVING
+        state.pop('v21_warm_start', None)
         state['solve'] = {'hash': h, 'status': FAILED, 'message': f'Solver error: {exc}', 'results': None}
         return state['solve']
+    ok = bool(p) and info.get('quality_gate') == 'PASS'
+    if ok: msg = f"Converged · {sum(v.get('liquid_rate_m3d', 0.0) for v in d.values()):,.0f} m³/d liquid"
+    else:
+        errs = [x.get('message', '') for x in info.get('debug', []) if x.get('severity') == 'error'] or [info.get('message', 'Solve failed')]
+        msg = ' | '.join(str(m) for m in errs[:3])
+    state['solve'] = {'hash': h, 'status': SOLVED if ok else FAILED, 'message': msg, 'results': (p, q, info, d)}
+    # Only a converged state is a valid starting point. Keeping a failed one made every later solve (after the user fixed the data) start from the bad point.
+    if ok and p: state['v21_warm_start'] = {'pressures': p, 'flows': q, 'well_rates': {k: v['liquid_rate_m3d'] for k, v in d.items()}}
+    else: state.pop('v21_warm_start', None)
+    return state['solve']
     ok = bool(p) and info.get('quality_gate') == 'PASS'
     if ok: msg = f"Converged · {sum(v.get('liquid_rate_m3d', 0.0) for v in d.values()):,.0f} m³/d liquid"
     else:

@@ -41,8 +41,16 @@ def network_svg(nodes, edges, labels=None, rates=None, title='FieldNet network',
         x, y = float(n.get('x') or 0), float(n.get('y') or 0); w, h = _size(n); k = n.get('kind', ''); col = COLORS.get(k, '#9aa5b1'); nm = escape(str(n.get('name', n['id'])))
         if k == 'joint':
             o.append(f'<circle cx="{x+JR:.1f}" cy="{y+JR:.1f}" r="{JR-1}" fill="#eceff1" stroke="#455a64" stroke-width="1.5"/><text x="{x+2*JR+4:.1f}" y="{y+JR+4:.1f}" font-size="10" fill="#234">{nm}</text>'); continue
-        o.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{w}" height="{h}" rx="9" fill="#f7f9fb" stroke="#455a64" stroke-width="1.3"/><rect x="{x:.1f}" y="{y:.1f}" width="5" height="{h}" rx="2" fill="{col}"/>'
-                 f'<text x="{x+12:.1f}" y="{y+16:.1f}" font-size="8" fill="#667">{escape(k.replace("_", " ").upper())}</text><text x="{x+12:.1f}" y="{y+33:.1f}" font-size="12" font-weight="600" fill="#123">{nm}</text>'
-                 f'<text x="{x+12:.1f}" y="{y+h-8:.1f}" font-size="10" fill="#046">{escape(str(labels.get(n["id"], "")))}</text>'
+        from ui.shapes import shape as _shape
+        sh = _shape(k); pad = 22 if sh and k not in ('manifold', 'reservoir', 'compressor') else 12
+        if sh:
+            tr = f'transform="translate({x:.1f},{y:.1f}) scale({w/100:.4f},{h/100:.4f})"'; dash = ' stroke-dasharray="6 4"' if sh[2] else ''
+            body = (f'<path d="{sh[0]}" {tr} fill="#f7f9fb" stroke="{col}" stroke-width="2" vector-effect="non-scaling-stroke"{dash}/>'
+                    + (f'<path d="{sh[1]}" {tr} fill="none" stroke="{col}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>' if sh[1] else ''))
+        else:
+            body = f'<rect x="{x:.1f}" y="{y:.1f}" width="{w}" height="{h}" rx="9" fill="#f7f9fb" stroke="#455a64" stroke-width="1.3"/><rect x="{x:.1f}" y="{y:.1f}" width="5" height="{h}" rx="2" fill="{col}"/>'
+        o.append(body +
+                 f'<text x="{x+pad:.1f}" y="{y+16:.1f}" font-size="8" fill="#667">{escape(k.replace("_", " ").upper())}</text><text x="{x+pad:.1f}" y="{y+33:.1f}" font-size="12" font-weight="600" fill="#123">{nm}</text>'
+                 f'<text x="{x+pad:.1f}" y="{y+h-8:.1f}" font-size="10" fill="#046">{escape(str(labels.get(n["id"], "")))}</text>'
                  f'<circle cx="{x:.1f}" cy="{y+h/2:.1f}" r="5" fill="#fff" stroke="#456"/><circle cx="{x+w:.1f}" cy="{y+h/2:.1f}" r="5" fill="#fff" stroke="#456"/>')
     o.append('</svg>'); return ''.join(o)

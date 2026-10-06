@@ -76,6 +76,8 @@ class Tank:
         self.t = _f(p, 'temperature_c'); self.swi = min(max(_f(p, 'swi'), 0.0), 0.9)
         self.pmin = _f(p, 'min_pressure_bar'); self.gas_sg = _f(p, 'gas_sg')
         self.jaq = max(_f(p, 'aquifer_pi_m3d_bar'), 0.0)
+        from network.assumptions import target_rf_of, taper_days_of
+        self.target_rf = target_rf_of(p); self.taper_days = taper_days_of(p); self.params = p
         self.np = self.gp = self.wp = self.winj = self.ginj = self.we = 0.0
         # Communication with other tanks (canvas: tank -> tank link). xin = cumulative net reservoir volume received [m3].
         self.xin = 0.0

@@ -299,6 +299,8 @@ def _completion(params):
         if a is None or b is None or d is None:
             warns.append(f'Completion row {i} skipped: from_md_m, to_md_m and id_m are all required')
             continue
+        if d > 1.0:
+            warns.append(f'Completion row {i}: ID {d:g} m is not plausible for a tubing string (0.0889 m = 3.5 in). If you entered inches or millimetres, change the ID unit above the table.')
         if d <= 0:
             warns.append(f'Completion row {i} skipped: id_m must be > 0 (got {d:g})')
             continue

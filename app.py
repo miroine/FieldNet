@@ -218,6 +218,8 @@ with tab_net:
         tb1,tb2,tb3=st.columns([1,2.2,1.4])
         style_button(st,'solve_btn_top','done' if status==SOLVED else 'failed' if status==FAILED else 'running' if status==SOLVING else 'none')
         if tb1.button('▶ Solve network',type='primary',use_container_width=True,disabled=status==SOLVING,key='solve_btn_top'): request_solve()
+        if status==FAILED and tb1.button('↺ Reset solver & retry',use_container_width=True,key='solve_reset',help='Forget the previous solution, warm start and forecast state, then solve from scratch.'):
+            reset_solve(); st.session_state.pop('forecast',None); st.session_state.pop('hub_cache',None); request_solve()
         _honour=tb2.checkbox('Honour constraints',value=True,key='cmp_honour_cb',help='On: separator / export capacities, per-phase limits, velocity, erosion and connection limits are enforced by choking upstream wells (GAP "with constraints"). Off: unconstrained solve; violations are only reported.')
         tb3.caption(f"{'🟢' if status==SOLVED else '🟡' if status==SOLVING else '🔴' if status==FAILED else '⚪'} {status}")
         compute=render_compute_settings(st,st.session_state.nodes,st.session_state.edges,honour=_honour)

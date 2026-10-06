@@ -315,8 +315,8 @@ class FluidModel:
             mu = mu_live(mu_od, rs)
         else:
             co = co_vasquez_beggs(max(p, pb), rsb, t_f, s.api, g) * s.cal.co_mult
-            bo = bob * math.exp(-co * (p - pb)); mu = mu_undersat(mu_live(mu_od, rsb), p, pb)
-        rho_o = (62.4 * go + 0.0136 * rs * g) / bo * LB_FT3
+            bo = bob * math.exp(-min(max(co * (p - pb), 0.0), 2.0)); mu = mu_undersat(mu_live(mu_od, rsb), p, pb)
+        rho_o = (62.4 * go + 0.0136 * rs * g) / max(bo, 0.2) * LB_FT3
         z = self._z(p_bar, t_c); m = MW_AIR * s.gas_sg
         rho_g = p_bar * 1e5 * m * 1e-3 / (z * 8.314462 * (t_c + 273.15))
         mu_g = gas_viscosity_cp(p_bar, t_c, z, g, s.co2, s.h2s, s.n2) * s.cal.mug_mult * CP

@@ -75,6 +75,8 @@ def _fluid_of(e, info):
 def edge_profile(e, q, p_up, info=None, ph=None):
     """March a flowline from its upstream end. Returns rows {x_m, z_m, pressure_bar, velocity_ms, holdup, regime, rho, erosional_ratio}."""
     from solver.equations import flowline_segments, _flowline_fn, fnum
+    from solver.steady_state import apply_fluid_follow
+    e = apply_fluid_follow([e], info)[0]     # the line fluid the solver used (follows the wells)
     prm = e.get('params') or {}
     segs = flowline_segments(e)
     if e.get('kind', 'pipeline') != 'pipeline' or not segs or sum(s[0] for s in segs) <= 0: return []
@@ -112,6 +114,8 @@ def well_profile(node, q, whp):
 
 def edge_summary(e, q, p, info, ph):
     """Max velocity / erosional ratio and dP for one link."""
+    from solver.steady_state import apply_fluid_follow
+    e = apply_fluid_follow([e], info)[0]
     out = {'dp_bar': None, 'max_velocity_ms': None, 'max_erosional_ratio': None, 'arrival_velocity_ms': None}
     a, b = p.get(e['source']), p.get(e['target'])
     if a is not None and b is not None: out['dp_bar'] = a - b

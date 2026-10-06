@@ -7,7 +7,7 @@ choke-back, as GAP does for separator/pipeline limits) and explainable diagnosti
 from copy import deepcopy
 from collections import defaultdict, deque
 import math
-from solver.steady_state import solve_network
+from solver.steady_state import solve_network, solve_network_robust, apply_fluid_follow
 from solver.physical_audit import reconstruct_physical_residuals
 from solver.constraints import active_constraints
 from solver.equations import fixed_pressure, boundary_issues, links_of
@@ -151,12 +151,16 @@ def enforce_capacity_constraints(nodes, edges, solve, *, max_iterations=8, initi
                 if qw<=1e-6 or (key and float(d.get(wid,{}).get(key,0.0))<=1e-9): continue
                 prm=byid[wid].setdefault('params',{}); old=prm.get('_network_cap_m3d')
                 new=qw*f if old is None else min(float(old),qw*f)
+                if old is not None and new>=float(old)*(1-1e-6): continue     # no tighter than the cap already applied: nothing new to enforce
                 prm['_network_cap_m3d']=new; changed=True
                 actions.append({'well':byid[wid].get('name',wid),'well_id':wid,'constraint':f"{comp} {c['Constraint']}",'cap_m3d':new,
                                 'message':f"{byid[wid].get('name',wid)} choked to {new:.1f} m3/d to honour {comp} {c['Constraint'].lower()} ({c['Limit']:.0f})."})
         if not changed: break
         guess={'pressures':p,'flows':q,'well_rates':{k:v['liquid_rate_m3d'] for k,v in d.items()}}
         result=solve(ns,edges,guess)
+        if float(result[2].get('max_abs_residual',0.0))>1e-4:
+            result[2]['message']=(str(result[2].get('message',''))+' | Capacity enforcement stopped: the choked network does not converge (limit far below the wells\' natural rate - check separator/compressor limits and line sizes).').strip(' |')
+            break
     return result, ns, actions
 
 def split_isolated(nodes, edges):
@@ -188,10 +192,10 @@ def solve_v21(nodes, edges, *, warm_start=None, attempts=3, residual_tolerance=1
     def _run(ns, es, guess):
         hist=[]; best=None; g=_clean_guess(ns,es,guess)
         for k in range(max(1,int(attempts))):
-            try: p,q,info,d=solve_network(ns,es,x_scale='jac',max_nfev=3000+1000*k,initial_guess=g)
+            try: p,q,info,d=solve_network_robust(ns,es,x_scale='jac',max_nfev=3000+1000*k,initial_guess=g)
             except ValueError as exc:
                 return ({},{},{'success':False,'message':str(exc),'max_abs_residual':float('inf'),'constraints':[],'violations':0},{}),None,hist
-            audit=reconstruct_physical_residuals(ns,es,p,q,info.get('injector_rates'))
+            audit=reconstruct_physical_residuals(ns,apply_fluid_follow(es,info),p,q,info.get('injector_rates'))
             score=max(audit['max_pressure_residual_bar']/10.0,audit['max_mass_residual_m3d']/1000.0)
             hist.append({'attempt':k+1,'success':bool(info.get('success')),'scaled_physical_residual':float(score),'nfev':info.get('nfev'),'jacobian_condition':info.get('jacobian_condition')})
             if best is None or score<best[0]: best=(score,p,q,info,d,audit)

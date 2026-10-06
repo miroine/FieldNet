@@ -499,8 +499,8 @@ def make_step_solver(objective, guide=None, **opts):
     def step(nodes, edges, guess=None):
         fn = solve_fn
         if fn is None:
-            from solver.steady_state import solve_network
-            fn = lambda ns, es, g: solve_network(ns, es, initial_guess=g)
+            from solver.steady_state import solve_network_robust
+            fn = lambda ns, es, g: solve_network_robust(ns, es, initial_guess=g)
         res = optimize_field(nodes, edges, fn, objective=objective, guide=guide, guess=guess, **o)
         if res['result'] is None:
             return {}, {}, {'success': False, 'message': '; '.join(res['reasons']) or 'optimiser solve failed', 'max_abs_residual': float('inf'),

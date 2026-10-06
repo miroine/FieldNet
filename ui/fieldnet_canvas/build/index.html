@@ -47,6 +47,14 @@ svg#edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z
 .node.joint .port{top:8px}.node.joint .pin{left:-8px}.node.joint .pout{right:-8px}
 .node.joint .stripe{display:none}.node.joint .jn{position:absolute;left:34px;top:6px;font-size:10px;opacity:.8;white-space:nowrap;pointer-events:none}
 .node.equip{width:124px;min-height:58px;padding:7px 10px 6px 12px;border-radius:14px}.node.equip .port{top:22px}
+.node.shaped{background:transparent;border:none;box-shadow:none;border-radius:0;padding:9px 24px 8px 24px}
+.node.shaped .stripe{display:none}
+.node.shaped svg.shp{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:0;filter:drop-shadow(0 3px 5px #0009)}
+.node.shaped svg.shp path{fill:#1a202a;stroke-width:2;vector-effect:non-scaling-stroke}
+.node.shaped svg.shp path.det{fill:none;stroke-width:1.2;opacity:.8}
+.node.shaped>*:not(svg):not(.port){position:relative;z-index:1}
+.node.shaped.sel{outline:none}.node.shaped.sel svg.shp path{stroke:#67b7ff!important;stroke-width:3}
+.node.shaped.manifold,.node.shaped.reservoir,.node.shaped.compressor{padding-left:14px;padding-right:14px}
 .node .tag{font-size:9px;opacity:.55;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pal-group{margin:6px 0 2px;font-size:10px;letter-spacing:.8px;text-transform:uppercase;opacity:.6;cursor:pointer;user-select:none}
 .pal-group:before{content:'▾ '}.pal-group.closed:before{content:'▸ '}
@@ -71,6 +79,7 @@ const TYPES=[['reservoir','Reservoir tank'],['well','Well'],['manifold','Manifol
 const COLORS={well:'#29b6f6',manifold:'#9fa8da',separator:'#66bb6a',separator_stage:'#66bb6a',sink:'#ef5350',oil_export:'#ef5350',gas_export:'#ef5350',water_disposal:'#ef5350',water_source:'#4dd0e1',gas_source:'#ffb74d',water_injector:'#4dd0e1',gas_injector:'#ffb74d',reservoir:'#8d6e63',joint:'#cfd8dc',choke:'#ba68c8',control_valve:'#ba68c8',pump:'#4db6ac',compressor:'#ffb74d'};
 const EQUIP=['choke','control_valve','pump','compressor'];
 const GLYPH={choke:'⧖',control_valve:'⋈',pump:'⟳',compressor:'⇶'};
+const SHAPES={"reservoir":"M0,16 Q0,0 50,0 Q100,0 100,16 V84 Q100,100 50,100 Q0,100 0,84Z","well":"M50,0 A50,50 0 1 1 50,100 A50,50 0 1 1 50,0Z","water_injector":"M50,0 A50,50 0 1 1 50,100 A50,50 0 1 1 50,0Z","gas_injector":"M50,0 A50,50 0 1 1 50,100 A50,50 0 1 1 50,0Z","manifold":"M10,0 H90 L100,50 L90,100 H10 L0,50Z","separator":"M14,0 H86 Q100,0 100,50 Q100,100 86,100 H14 Q0,100 0,50 Q0,0 14,0Z","separator_stage":"M14,0 H86 Q100,0 100,50 Q100,100 86,100 H14 Q0,100 0,50 Q0,0 14,0Z","sink":"M0,0 H80 L100,50 L80,100 H0Z","oil_export":"M0,0 H80 L100,50 L80,100 H0Z","gas_export":"M0,0 H80 L100,50 L80,100 H0Z","water_disposal":"M0,0 H80 L100,50 L80,100 H0Z","water_source":"M20,0 H100 V100 H20 L0,50Z","gas_source":"M20,0 H100 V100 H20 L0,50Z","choke":"M20,0 H80 L100,26 V74 L80,100 H20 L0,74 V26Z","control_valve":"M20,0 H80 L100,26 V74 L80,100 H20 L0,74 V26Z","pump":"M50,0 A50,50 0 1 1 50,100 A50,50 0 1 1 50,0Z","compressor":"M0,0 L100,24 V76 L0,100Z"};const SHAPE_DETAIL={"reservoir":"M0,16 Q0,32 50,32 Q100,32 100,16","separator":"M14,0 V100 M86,0 V100","separator_stage":"M14,0 V100 M86,0 V100","well":"M50,0 V16","water_injector":"M50,0 V16","gas_injector":"M50,0 V16"};const SHAPE_DASHED=["gas_injector", "gas_source", "water_injector", "water_source"];/*shapes-sync*/
 const NODE_W=154, PORT_Y=37;
 let state={nodes:[],edges:[],p:{},q:{},status:'UNSOLVED',message:''};
 let selected=null, undo=[], redo=[], rev=0, pending=null, firstRender=true;
@@ -130,14 +139,14 @@ function solvedView(){return state.status==='SOLVED'||state.status==='FAILED'}
 function render(){
  world.querySelectorAll('.node').forEach(x=>x.remove());for(const k in els)delete els[k];
  state.nodes.forEach((n,i)=>{if(!isFinite(+n.x)||!isFinite(+n.y)){n.x=60+(i%4)*200;n.y=60+Math.floor(i/4)*120}
-  const e=document.createElement('div');e.className='node'+(selected===n.id?' sel':'')+(n.kind==='joint'?' joint':'')+(EQUIP.includes(n.kind)?' equip':'');e.style.left=(+n.x)+'px';e.style.top=(+n.y)+'px';e.dataset.id=n.id;
+  const e=document.createElement('div');e.className='node'+(selected===n.id?' sel':'')+(n.kind==='joint'?' joint':'')+(EQUIP.includes(n.kind)?' equip':'')+(SHAPES[n.kind]?' shaped '+n.kind:'');e.style.left=(+n.x)+'px';e.style.top=(+n.y)+'px';e.dataset.id=n.id;
   const pv=state.p[n.id];let res=(solvedView()&&pv!=null)?Number(pv).toFixed(1)+' bar':'unsolved';
   if(n.kind==='reservoir'){const pp=n.params||{};const ph={oil:'oil',gas:'gas',gas_condensate:'condensate'}[pp.fluid_phase||'oil']||'oil';const inpl=ph==='oil'?((+pp.stoiip_sm3||0)/1e6).toFixed(1)+' MSm³':((+pp.giip_sm3||0)/1e9).toFixed(2)+' GSm³';res=ph+' · '+inpl+' · '+Math.round(+pp.reservoir_pressure_bar||0)+' bar'}
   const lab=(state.labels||{})[n.id];if(lab)res=lab;
-  const pp0=n.params||{};let tag='';if(n.kind==='well'||n.kind==='water_injector'||n.kind==='gas_injector'){tag=((pp0.role||(n.kind==='well'?'producer':'injector'))+' · '+(pp0.phase||(n.kind==='gas_injector'?'gas':n.kind==='water_injector'?'water':'oil')))}else if(n.kind==='separator'||n.kind==='separator_stage'){tag=(pp0.separator_type||'two_phase').replace('_',' ')}
+  const pp0=n.params||{};let tag='';if(n.kind==='well'||n.kind==='water_injector'||n.kind==='gas_injector'){tag=((pp0.role||(n.kind==='well'?'producer':'injector'))+' · '+(pp0.phase||(n.kind==='gas_injector'?'gas':n.kind==='water_injector'?'water':(pp0.ipr_model==='Gas'?'gas':'oil'))))}else if(n.kind==='separator'||n.kind==='separator_stage'){tag=(pp0.separator_type||'two_phase').replace('_',' ')}
   const ports='<span class="port pin" data-port="in" title="IN — drop a connection here"></span><span class="port pout" data-port="out" title="OUT — drag to another component\'s IN port"></span>';
   if(n.kind==='joint')e.innerHTML=`${ports}<div class="jn">${n.name}</div>`;
-  else e.innerHTML=`<span class="stripe" style="background:${COLORS[n.kind]||'#9aa5b1'}"></span><div class=kind>${EQUIP.includes(n.kind)?GLYPH[n.kind]+' ':''}${n.kind.replace('_',' ')}</div><div class=nm title="${n.name}">${n.name}</div>${tag?'<div class="tag">'+tag+'</div>':''}${ports}<div class="result ${res==='unsolved'?'stale':''}" style="${n.kind==='reservoir'?'color:#d7b8a8':''}">${res}</div>`;
+  else e.innerHTML=(SHAPES[n.kind]?`<svg class="shp" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="${SHAPES[n.kind]}" style="stroke:${COLORS[n.kind]||'#9aa5b1'}"${SHAPE_DASHED.includes(n.kind)?' stroke-dasharray="6 4"':''}/>${SHAPE_DETAIL[n.kind]?`<path class="det" d="${SHAPE_DETAIL[n.kind]}" style="stroke:${COLORS[n.kind]||'#9aa5b1'}"/>`:''}</svg>`:'')+`<span class="stripe" style="background:${COLORS[n.kind]||'#9aa5b1'}"></span><div class=kind>${EQUIP.includes(n.kind)?GLYPH[n.kind]+' ':''}${n.kind.replace('_',' ')}</div><div class=nm title="${n.name}">${n.name}</div>${tag?'<div class="tag">'+tag+'</div>':''}${ports}<div class="result ${res==='unsolved'?'stale':''}" style="${n.kind==='reservoir'?'color:#d7b8a8':''}">${res}</div>`;
   world.appendChild(e);els[n.id]=e});
  draw();tools();
 }

@@ -150,6 +150,8 @@ def render_forecast(st, nodes, edges):
                     c1, c2 = st.columns(2)
                     dep[w['id']] = {'pressure_decline_bar_per_1000m3': c1.number_input(f"{w['name']} decline [bar/1000 m³]", 0.0, 10.0, float((w.get('params') or {}).get('pressure_decline_bar_per_1000m3', 0.03)), 0.01, key='dec' + w['id']),
                                     'pressure_support_bar_per_day': c2.number_input(f"{w['name']} support [bar/day]", 0.0, 5.0, float((w.get('params') or {}).get('pressure_support_bar_per_day', 0.0)), 0.001, key='sup' + w['id'])}
+        from ui.assumptions_view import render_assumptions
+        render_assumptions(st, nodes, edges)
         with st.expander('Schedule events (optional)'):
             st.caption('Shut in or start up wells, change rate limits, separator pressure, flowline diameter ... Pick the event, the element and the date; values use your unit profile. The same schedule is used by the Development schedule and Scenarios tabs.')
             sched = render_event_builder(st, nodes, edges, None, st.session_state.get('unit_profile', 'norwegian_si'), key_prefix='evb_fc', start_date=start)
@@ -223,7 +225,7 @@ def render_forecast(st, nodes, edges):
     if fc.get('recovery'):
         st.markdown('**Recovery by reservoir tank**')
         rdf = pd.DataFrame(fc['recovery'])
-        st.dataframe(rdf.drop(columns=['Tank ID'], errors='ignore').style.format({c: '{:,.0f}' for c in rdf.columns if c.startswith('Cum') or 'influx' in c} | {'Pressure [bar]': '{:.1f}', 'RF oil [%]': '{:.1f}', 'RF gas [%]': '{:.1f}'}), hide_index=True, use_container_width=True)
+        st.dataframe(rdf.drop(columns=['Tank ID'], errors='ignore').style.format({c: '{:,.0f}' for c in rdf.columns if c.startswith('Cum') or 'influx' in c} | {c: '{:.1f}' for c in ('Pressure [bar]', 'RF oil [%]', 'RF gas [%]', 'Target RF [%]', 'Primary RF [%]') if c in rdf.columns}), hide_index=True, use_container_width=True)
     with st.expander('Timestep table & downloads'):
         fdf = pd.DataFrame(fc['field']); st.dataframe(fdf, hide_index=True, use_container_width=True)
         d1, d2 = st.columns(2)

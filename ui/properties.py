@@ -112,11 +112,11 @@ def trajectory_editor(st, node):
             if kind == 'S': args['drop_rate_deg_per_30m'] = br
             if kind == 'horizontal': args['lateral_length'] = synced_number(st, 'Lateral length [m]', 1000.0, 'tjlat' + sid, 10.0, 8000.0)
             if st.button('Apply template', key='tjapply' + sid):
-                try: p['trajectory'] = build_survey(kind, **args); p['depth_m'] = well_total_depth(p)[1]
+                try: p['trajectory'] = build_survey(kind, **args); p['depth_m'] = well_total_depth(p)[1]; st.session_state['tjv' + sid] = st.session_state.get('tjv' + sid, 0) + 1
                 except ValueError as exc: st.error(str(exc))
         else:
             rows = p.get('trajectory') or [{'md_m': 0.0, 'tvd_m': 0.0, 'inc_deg': 0.0}, {'md_m': 2000.0, 'tvd_m': 2000.0, 'inc_deg': 0.0}]
-            ed = st.data_editor(pd.DataFrame(rows), num_rows='dynamic', use_container_width=True, key='tjt' + sid + str(len(rows)))
+            ed = st.data_editor(pd.DataFrame(rows), num_rows='dynamic', use_container_width=True, key='tjt' + sid + str(st.session_state.get('tjv' + sid, 0)))
             recs = [r for r in ed.to_dict('records') if clean_num(r.get('md_m')) is not None]
             try:
                 p['trajectory'] = survey_from_rows(recs)
@@ -131,14 +131,23 @@ def trajectory_editor(st, node):
                 fig.update_yaxes(autorange='reversed'); st.plotly_chart(_fig(fig, title='Well path (TVD vs departure)', x='Horizontal departure [m]', y='TVD [m]', legend=False, height=260), use_container_width=True)
             except Exception: pass
         st.markdown('**Completion / tubing diameters** (MD intervals; gaps continue the previous ID)')
+        unit = synced_select(st, 'ID unit in the table', ['in', 'mm', 'm'], 'in', 'cmu' + sid, format_func={'in': 'inch (3.5 = 3½" tubing)', 'mm': 'millimetre (88.9)', 'm': 'metre (0.0889)'}.get)
+        fac = {'in': 0.0254, 'mm': 1e-3, 'm': 1.0}[unit]; idcol = f'ID [{unit}]'
         crow = p.get('completion') or []
-        cdf = pd.DataFrame(crow, columns=['label', 'from_md_m', 'to_md_m', 'id_m', 'roughness_m']) if crow else pd.DataFrame(columns=['label', 'from_md_m', 'to_md_m', 'id_m', 'roughness_m'])
-        ced = st.data_editor(cdf, num_rows='dynamic', use_container_width=True, key='cmp' + sid + str(len(crow)))
+        cols = ['label', 'from_md_m', 'to_md_m', idcol, 'roughness_m']
+        cdf = pd.DataFrame([{'label': r.get('label', ''), 'from_md_m': r.get('from_md_m'), 'to_md_m': r.get('to_md_m'), idcol: round(float(r['id_m']) / fac, 4), 'roughness_m': r.get('roughness_m')} for r in crow], columns=cols)
+        for c in cols[1:]: cdf[c] = pd.to_numeric(cdf[c], errors='coerce').astype('float64')     # numeric columns even when the table is empty (an empty frame is otherwise all text)
+        cdf['label'] = cdf['label'].astype('object')
+        try: cfg = {'label': st.column_config.TextColumn('Label'), 'from_md_m': st.column_config.NumberColumn('From MD [m]', min_value=0.0), 'to_md_m': st.column_config.NumberColumn('To MD [m]', min_value=0.0),
+               idcol: st.column_config.NumberColumn(idcol, min_value=0.0, help='Internal diameter of the tubing / liner in this interval. Stored in metres internally.'),
+               'roughness_m': st.column_config.NumberColumn('Roughness [m]', min_value=0.0, help='Optional; blank = the well roughness')}
+        except Exception: cfg = None
+        ced = st.data_editor(cdf, num_rows='dynamic', use_container_width=True, key='cmp' + sid + unit, **({'column_config': cfg} if cfg else {}))
         new = []
         for r in ced.to_dict('records'):
-            if clean_num(r.get('id_m')) is None or clean_num(r.get('from_md_m')) is None or clean_num(r.get('to_md_m')) is None: continue
-            row = {'from_md_m': float(r['from_md_m']), 'to_md_m': float(r['to_md_m']), 'id_m': float(r['id_m'])}
-            if clean_num(r.get('roughness_m')) is not None: row['roughness_m'] = float(r['roughness_m'])
+            if clean_num(r.get(idcol)) is None or clean_num(r.get('from_md_m')) is None or clean_num(r.get('to_md_m')) is None: continue
+            row = {'from_md_m': float(clean_num(r['from_md_m'])), 'to_md_m': float(clean_num(r['to_md_m'])), 'id_m': float(clean_num(r[idcol])) * fac}
+            if clean_num(r.get('roughness_m')) is not None: row['roughness_m'] = float(clean_num(r.get('roughness_m')))
             if clean_text(r.get('label')): row['label'] = clean_text(r.get('label'))
             new.append(row)
         if new: p['completion'] = new

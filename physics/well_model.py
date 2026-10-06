@@ -30,6 +30,9 @@ def well_settings(prm: dict) -> dict:
     skin=_f(p,'skin',0.0); cref=_f(p,'skin_reference_factor',DEFAULT_SKIN_REFERENCE)
     pi0=max(_f(p,'pi_m3d_bar',10.0),0.0); qmax0=max(_f(p,'qmax_m3d',1500.0),0.0)
     mult=skin_adjusted_pi(1.0,skin,cref)
+    # Calibration multiplier on productivity (forecast assumption; network/calibration.py). Scales PI, Vogel qmax and gas C.
+    pm=min(max(_f(p,'productivity_multiplier',1.0),1e-3),1e3)
+    mult*=pm
     lift=str(p.get('lift_type','none') or 'none').lower().replace(' ','_')
     available=p.get('available',True)
     if isinstance(available,str): available=available.strip().lower() not in ('false','0','no','off')
@@ -54,6 +57,11 @@ def well_settings(prm: dict) -> dict:
     if net_cap is not None:
         try: max_rate=min(max_rate,max(float(net_cap),0.0))
         except (TypeError, ValueError): pass
+    # Recovery assumptions (network/assumptions.py): tank target-RF / well EUR taper cap, written by the forecast only.
+    ac=p.get('_assumption_cap_m3d')
+    if ac is not None:
+        try: max_rate=min(max_rate,max(float(ac),0.0))
+        except (TypeError, ValueError): pass
     # Decline-curve / prediction-source potential (network/prediction_sources.py); same treatment as the network cap.
     pot_cap=p.get('_potential_cap_m3d')
     if pot_cap is not None:
@@ -74,7 +82,7 @@ def well_settings(prm: dict) -> dict:
         'geometry':geometry,
         'pr':max(_f(p,'reservoir_pressure_bar',200.0),0.0),
         'ipr_model':_ipr_name(p.get('ipr_model','PI')),
-        'gas_c':max(_f(p,'gas_c_sm3d_bar2n',50.0),0.0), 'gas_n':min(max(_f(p,'gas_n',1.0),0.5),1.0),
+        'gas_c':max(_f(p,'gas_c_sm3d_bar2n',50.0),0.0)*pm, 'gas_n':min(max(_f(p,'gas_n',1.0),0.5),1.0),
         'pi':pi0*mult, 'qmax':qmax0*mult,
         'depth':depth, 'tubing_id':max(_f(p,'tubing_id_m',0.0762),1e-3),
         'roughness':max(_f(p,'tubing_roughness_m',4.5e-5),0.0),

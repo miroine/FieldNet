@@ -1,16 +1,16 @@
 import copy
 from datetime import datetime
-from solver.steady_state import solve_network
+from solver.steady_state import solve_network, solve_network_robust
 
 
 def _solve_step_one(nodes, edges, guess=None, enforce_constraints=False):
     """Plain / constrained solve of one network (top-level so a process pool can pickle it)."""
     if enforce_constraints:
         from solver.v21 import enforce_capacity_constraints
-        (p,q,info,d),_,actions=enforce_capacity_constraints(nodes,edges,lambda ns,es,g: solve_network(ns,es,initial_guess=g),initial_guess=guess)
+        (p,q,info,d),_,actions=enforce_capacity_constraints(nodes,edges,lambda ns,es,g: solve_network_robust(ns,es,initial_guess=g),initial_guess=guess)
         info=dict(info); info['constraint_actions']=actions
         return p,q,info,d
-    return solve_network(nodes,edges,initial_guess=guess)
+    return solve_network_robust(nodes,edges,initial_guess=guess)
 
 
 def _solve_component_task(args):
@@ -118,7 +118,7 @@ def iter_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, 
 
     def _result():
         return {'field':list(rows),'wells':list(well_rows),'constraints':list(constraint_rows),'tanks':list(tank_rows),'nodes':list(node_rows),'edges':list(edge_rows),
-                'final_state':state,'recovery':[tk.row() for tk in tanks.values()]}
+                'final_state':state,'recovery':annotate_recovery([tk.row() for tk in tanks.values()],tanks)}
 
     def _event(kind, stage, date, substep=0, with_result=False):
         done=len(rows); el=_time.perf_counter()-_tstart
@@ -127,7 +127,9 @@ def iter_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, 
         if with_result: ev['result']=_result()
         return ev
 
-    last_pq={}
+    last_pq={}; cap_state={'active':False}
+    from network.assumptions import has_assumptions, annotate_recovery
+    use_assump=has_assumptions(base)
     def solve_now(nn0, date=None, day=None):
         nonlocal guess
         for tk in tanks.values(): tk.apply_external(t if day is None else day, start_date)
@@ -144,6 +146,22 @@ def iter_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, 
                 nn=apply_prediction_sources(nn,date,start_date,{k:dict(v) for k,v in state.items()})
             except ImportError: pass
         p,q,info,details=solve_step(nn,ee,guess,enforce_constraints,step_solver,workers); guess=next_guess(p,q,info)
+        cap_state['active']=False
+        if use_assump:
+            from network.assumptions import compute_caps, apply_caps, duty_cycle
+            caps,shut,notes=compute_caps(nn,details,tanks,state)
+            if caps or shut:   # re-solve with the tapered well caps so back-pressure effects are honoured
+                unc=(nn,p,q,info,details); cap_state['active']=True
+                nn_c=apply_caps(nn,caps,shut)
+                # the capped solve starts from the uncapped one, but the warm start kept for the next solve stays uncapped
+                p2,q2,info2,details2=solve_step(nn_c,ee,guess,enforce_constraints,step_solver,workers)
+                got=lambda wid: float((details2.get(wid) or {}).get('liquid_rate_m3d',0.0))
+                short=[w for w,c in caps.items() if got(w)<0.9*c]
+                if short:   # the choked rate is not sustainable (e.g. line loads up at low rate): produce at natural rate for a fraction of the time
+                    nn=duty_cycle(unc[0],caps,shut,unc[4]); p,q,info,details=unc[1],unc[2],dict(unc[3]),unc[4]
+                    notes=list(notes)+[(w,'duty-cycled (choked rate not sustainable)') for w in short]
+                else: nn,p,q,info,details=nn_c,p2,q2,dict(info2),details2
+                info['assumption_caps']=notes
         last_pq['p']=p; last_pq['q']=q
         return nn,info,details
 
@@ -170,6 +188,8 @@ def iter_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, 
                 rate_dp=abs(p0-probe.p)
                 lim=max_tank_dp_bar if max_tank_dp_bar else max(2.0,0.03*p0)
                 if rate_dp>1e-12: sub=min(sub,max(lim/rate_dp,rem/max_substeps))
+            if cap_state['active']:   # keep substeps short relative to the taper so the cap is followed
+                sub=min(sub,max(0.25*min([tk.taper_days for tk in tanks.values()]+[365.0]),1.0))
             sub=min(sub,rem)
             xfer=communication_transfers(tanks,sub) if any(tk.comm for tk in tanks.values()) else {}
             for tid,tk in tanks.items():

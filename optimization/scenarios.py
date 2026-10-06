@@ -1,6 +1,6 @@
 import numpy as np
 from copy import deepcopy
-from solver.steady_state import solve_network
+from solver.steady_state import solve_network_robust as solve_network
 
 def _sens_one(args):
     nodes,edges,target_type,target_id,param,val=args

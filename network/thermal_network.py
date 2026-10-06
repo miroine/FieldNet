@@ -76,7 +76,8 @@ def with_thermal(solver, tol=0.5, max_iter=4):
         for it in range(max_iter):
             res = solver(nodes, edges, *a, **kw)
             if not res or not res[0]: return res
-            tp = thermal_pass(nodes, edges, res); change = 0.0
+            from solver.steady_state import apply_fluid_follow
+            tp = thermal_pass(nodes, apply_fluid_follow(edges, res[2]), res); change = 0.0
             for e in edges:
                 if th.mode(e.get('params')) != 'heat_loss' or e['id'] not in tp['edge']: continue
                 t_new = tp['edge'][e['id']]['t_in']; t_old = fnum(e.get('params') or {}, 'temperature_c', 50.0)
