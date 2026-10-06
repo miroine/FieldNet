@@ -39,14 +39,39 @@ def well_settings(prm: dict) -> dict:
     except (TypeError, ValueError): max_rate=math.inf
     if not math.isfinite(max_rate): max_rate=math.inf
     enforce=str(p.get('rate_limit_mode','enforce')).lower()!='report'
+    # Per-phase well limits -> equivalent liquid-rate cap at the current water cut / GOR (tank updates change wc/gor, so the
+    # liquid cap follows the phase mix). Same treatment as the liquid limit incl. rate_limit_mode='report'.
+    wc_=min(max(_f(p,'water_cut',0.2),0.0),0.9999); gor_=max(_f(p,'gor_sm3sm3',100.0),0.0)
+    for key,frac in (('max_oil_rate_m3d',1.0-wc_),('max_water_rate_m3d',wc_),('max_gas_rate_sm3d',(1.0-wc_)*gor_)):
+        v=p.get(key)
+        if v is None: continue
+        try: v=float(v)
+        except (TypeError, ValueError): continue
+        if frac>1e-9 and math.isfinite(v) and v>=0: max_rate=min(max_rate,v/frac)
     if not enforce: max_rate=math.inf
     # Temporary cap written by the capacity-constraint enforcer (never by the user).
     net_cap=p.get('_network_cap_m3d')
     if net_cap is not None:
         try: max_rate=min(max_rate,max(float(net_cap),0.0))
         except (TypeError, ValueError): pass
+    # Decline-curve / prediction-source potential (network/prediction_sources.py); same treatment as the network cap.
+    pot_cap=p.get('_potential_cap_m3d')
+    if pot_cap is not None:
+        try: max_rate=min(max_rate,max(float(pot_cap),0.0))
+        except (TypeError, ValueError): pass
     depth=max(_f(p,'depth_m',2000.0),1.0)
+    geometry=None
+    if p.get('trajectory') or p.get('completion'):
+        from physics.trajectory import tubing_segments, well_total_depth
+        try:
+            geometry=tubing_segments(p); depth=max(float(well_total_depth(p)[1]),1.0)
+        except Exception: geometry=None
+    from physics.thermal import well_thermal_inputs
+    tub_id=max(_f(p,'tubing_id_m',0.0762),1e-3)
     return {
+        'pvt_prm':{'pvt':p.get('pvt')} if p.get('pvt') else None,
+        'thermal':well_thermal_inputs(p,depth,tub_id),
+        'geometry':geometry,
         'pr':max(_f(p,'reservoir_pressure_bar',200.0),0.0),
         'ipr_model':_ipr_name(p.get('ipr_model','PI')),
         'gas_c':max(_f(p,'gas_c_sm3d_bar2n',50.0),0.0), 'gas_n':min(max(_f(p,'gas_n',1.0),0.5),1.0),
@@ -58,6 +83,7 @@ def well_settings(prm: dict) -> dict:
         'water_cut':min(max(_f(p,'water_cut',0.2),0.0),0.9999),
         'gor':max(_f(p,'gor_sm3sm3',100.0),0.0), 'api':_f(p,'api',35.0), 'gas_sg':_f(p,'gas_sg',0.75),
         'correlation':str(p.get('vlp_model',p.get('correlation','Beggs-Brill')) or 'Beggs-Brill'),
+        'vlp_dp_multiplier':min(max(_f(p,'vlp_dp_multiplier',1.0),0.2),5.0),
         'lift_type':lift,
         'gas_lift_sm3d':max(_f(p,'gas_lift_injection_sm3d',0.0),0.0) if lift=='gas_lift' else 0.0,
         'gas_lift_depth':min(max(_f(p,'gas_lift_depth_m',depth),0.0),depth),
@@ -124,9 +150,13 @@ def esp_head_bar_simple(q, esp):
 
 def vlp_bhp(q, whp, s):
     """Bottom-hole pressure required to produce q at wellhead pressure whp, including lift."""
-    bhp,props=tubing_bhp_bar(max(q,0.0),whp,s['depth'],s['tubing_id'],s['roughness'],s['temperature'],s['water_cut'],s['gor'],s['api'],s['gas_sg'],
-                             s['correlation'],segments=s['segments'],extra_gas_sm3d=s['gas_lift_sm3d'],gas_injection_depth_m=s['gas_lift_depth'],
-                             bottomhole_temperature_c=s['bh_temperature'])
+    from physics.pvt_model import fluid_scope
+    with fluid_scope(s.get('pvt_prm'),s['gor'],s['api'],s['gas_sg']):
+        bhp,props=tubing_bhp_bar(max(q,0.0),whp,s['depth'],s['tubing_id'],s['roughness'],s['temperature'],s['water_cut'],s['gor'],s['api'],s['gas_sg'],
+                                 s['correlation'],segments=s['segments'],extra_gas_sm3d=s['gas_lift_sm3d'],gas_injection_depth_m=s['gas_lift_depth'],
+                                 bottomhole_temperature_c=s['bh_temperature'],geometry=s.get('geometry'),thermal=s.get('thermal'))
+    m=s.get('vlp_dp_multiplier',1.0)
+    if m!=1.0: bhp=whp+m*(bhp-whp)          # matched tubing pressure-drop multiplier (well-test / flowing-gradient match)
     assist=s['lift_assist_bar']+esp_head_bar_simple(q,s['esp'])
     return bhp-assist, props
 
@@ -153,18 +183,17 @@ def solve_well_rate(whp, s, points=24):
     qcap=rate_capacity(s)
     if qcap<=0: return 0.0, 'dead'
     grid=[qcap*i/points for i in range(points+1)]
-    h=[excess_bar(q,whp,s) for q in grid]
-    root=None
+    # Scan from the highest rate downwards and stop at the first (largest) stable root: the lower grid points are
+    # only evaluated when needed. Root refinement uses Brent's method (same root as the old bisection, ~3x fewer VLP evaluations).
+    root=None; f_hi=excess_bar(grid[points],whp,s)
     for i in range(points-1,-1,-1):
-        if h[i]>0 and h[i+1]<=0:
-            a,b,fa,fb=grid[i],grid[i+1],h[i],h[i+1]
-            for _ in range(60):
-                m=0.5*(a+b); fm=excess_bar(m,whp,s)
-                if fm>0: a,fa=m,fm
-                else: b,fb=m,fm
-                if b-a<1e-6*max(1.0,qcap): break
-            root=a-fa*(b-a)/(fb-fa) if fb!=fa else 0.5*(a+b)
+        f_lo=excess_bar(grid[i],whp,s)
+        if f_lo>0 and f_hi<=0:
+            from scipy.optimize import brentq
+            try: root=brentq(lambda x: excess_bar(x,whp,s),grid[i],grid[i+1],xtol=1e-6*max(1.0,qcap),rtol=1e-10,maxiter=60)
+            except (ValueError, RuntimeError): root=0.5*(grid[i]+grid[i+1])
             break
+        f_hi=f_lo
     if root is None: return 0.0, 'dead'
     if root<s.get('min_rate',0.0): return 0.0, 'below_min_rate'
     if root>s['max_rate']: return s['max_rate'], 'rate_limited'
@@ -179,5 +208,6 @@ def well_state(q, whp, s):
     return {'liquid_rate_m3d':q,'oil_rate_m3d':oil,'water_rate_m3d':q*wc,'gas_rate_sm3d':oil*s['gor'],
             'gas_lift_sm3d':s['gas_lift_sm3d'],'bhp_bar':max(pwf,bhp) if q>1e-9 else bhp,'vlp_bhp_bar':bhp,'ipr_pwf_bar':pwf,
             'whp_bar':whp,'choke_dp_equivalent_bar':max(pwf-bhp,0.0) if q>1e-9 else 0.0,
+            'wellhead_temperature_c':props.get('wellhead_temperature_c',s['temperature']),
             'liquid_holdup':props.get('liquid_holdup',1.0),'gas_fraction':props.get('gas_fraction',0.0),'status':status,
             'reservoir_pressure_bar':s['pr'],'vlp_model':s['correlation'],'lift_type':s['lift_type']}

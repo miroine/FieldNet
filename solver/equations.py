@@ -84,24 +84,80 @@ def _pipe_segments(e):
     return int(min(8,max(1,math.ceil(L/1500.0))))
 
 
-def pipeline_dp_bar(e, q, ps, pt, fluid='production'):
-    """Signed pressure drop Ps-Pt [bar] for a pipeline, marched along the line from the
-    upstream end (source for q>=0, target for reverse flow)."""
+def flowline_segments(e):
+    """Marching segments ``[(length_m, dz_m)]`` source -> target.
+
+    With a bathymetry profile or a riser (``params['profile']`` / ``params['riser']``) the geometry from
+    physics/flowline_profile.py is used (true length and local elevation change per segment); otherwise the
+    line is cut uniformly with the straight-line ``elevation_change_m`` (legacy behaviour)."""
     prm=e.get('params',{}) or {}
-    L=max(fnum(e,'length_m',1000.0),0.0); D=fnum(e,'diameter_m',.154); eps=fnum(e,'roughness_m',4.5e-5); dz=fnum(e,'elevation_change_m',0.0)
-    if L<=0: return 0.0
+    if prm.get('profile') or (prm.get('riser') or {}).get('enabled'):
+        try:
+            from physics.flowline_profile import profile_points, profile_segments
+            segs=profile_segments(profile_points(e),max_segments=int(fnum(prm,'segments',24)) if prm.get('segments') else 24)
+            if segs: return [(float(g['length_m']),float(g['dz_m'])) for g in segs]
+        except Exception: pass
+    L=max(fnum(e,'length_m',1000.0),0.0); dz=fnum(e,'elevation_change_m',0.0); n=_pipe_segments(e)
+    return [(L/n,dz/n)]*n
+
+
+def _flowline_fn(prm):
+    name=str(prm.get('correlation','Beggs-Brill'))
+    if name.lower().startswith('beggs'): return beggs_brill_dp_bar
+    if name.lower().startswith('homog'): return homogeneous_dp_bar
+    try:
+        from physics.correlations import get_correlation
+        return get_correlation(name)
+    except Exception: return homogeneous_dp_bar
+
+
+def _rho_liq(pr):
+    st=pr.get('state'); return float(st.oil_density_kgm3) if st is not None else 800.0
+
+
+def pipeline_march(e, q, ps, pt, fluid='production', t_in=None, profile=None):
+    """Signed pressure drop Ps-Pt [bar] for a pipeline, marched along the line from the upstream end (source for q>=0, target for
+    reverse flow). Returns ``(dp_bar, t_out_c)``. With ``params['thermal_model'] == 'heat_loss'`` the fluid temperature is marched too
+    (heat loss, Joule-Thomson, elevation) and used for the PVT of every segment; otherwise the line is isothermal at ``temperature_c``.
+    ``t_in`` overrides the inlet temperature; ``profile`` (list) receives {x_m, z_m, pressure_bar, temperature_c} rows in flow order."""
+    from physics.pvt_model import fluid_scope
+    from physics import thermal as th
+    prm=e.get('params',{}) or {}
+    D=fnum(e,'diameter_m',.154); eps=fnum(e,'roughness_m',4.5e-5)
+    segs=flowline_segments(e)
+    T=fnum(prm,'temperature_c',50.0) if t_in is None else float(t_in)
+    if sum(g[0] for g in segs)<=0: return 0.0, T
     wc=1.0 if fluid=='water' else fnum(prm,'water_cut',.2); gor=0.0 if fluid=='water' else fnum(prm,'gor_sm3sm3',100.0)
-    fn=beggs_brill_dp_bar if str(prm.get('correlation','Beggs-Brill')).lower().startswith('beggs') else homogeneous_dp_bar
-    T=fnum(prm,'temperature_c',50.0); api=fnum(prm,'api',35.0); sg=fnum(prm,'gas_sg',.75)
-    n=_pipe_segments(e); dl=L/n; dzs=dz/n
+    fn=_flowline_fn(prm)
+    api=fnum(prm,'api',35.0); sg=fnum(prm,'gas_sg',.75)
     p=float(ps) if q>=0 else float(pt); total=0.0
-    for _ in range(n):
-        d1,_=fn(q,dl,D,eps,dzs,max(p,1.0),T,wc,gor,api,sg)
-        step=-d1 if q>=0 else d1  # pressure change moving with the flow
-        pm=max(p+0.5*step,1.0)
-        d,_=fn(q,dl,D,eps,dzs,pm,T,wc,gor,api,sg)
-        total+=d; p=p-d if q>=0 else p+d
-    return total
+    order=segs if q>=0 else list(reversed(segs))   # reverse flow marches from the target end
+    thermal_on=th.mode(prm)=='heat_loss' and fluid!='water'
+    if thermal_on:
+        spec=th.line_spec(prm,D); pv=prm.get('pvt') or {}
+        stream=th.Stream(q,wc,gor,api,sg,gas_cp_override=prm.get('gas_cp_jkgk'),co2=fnum(pv,'co2',0.0),h2s=fnum(pv,'h2s',0.0),n2=fnum(pv,'n2',0.0))
+    x=0.0; z=0.0
+    with fluid_scope(prm,gor,api,sg):
+        for dl,dzs in order:
+            if q<0: dzs=-dzs
+            d1,pr1=fn(q,dl,D,eps,dzs if q>=0 else -dzs,max(p,1.0),T,wc,gor,api,sg)
+            step=-d1 if q>=0 else d1  # pressure change moving with the flow
+            pm=max(p+0.5*step,1.0); t_use=T
+            if thermal_on:   # predictor: outlet temperature with the first pressure estimate, then evaluate the PVT at the segment mean
+                t_pred=th.advance_segment(T,dl,dzs,step,spec['d_out'],spec['u'],spec['t_amb'],stream,p,pr1.get('free_gas_mass_fraction'),_rho_liq(pr1),spec['jt'],spec['elev'])
+                t_use=0.5*(T+t_pred)
+            d,prm_=fn(q,dl,D,eps,dzs if q>=0 else -dzs,pm,t_use,wc,gor,api,sg)
+            total+=d; step2=-d if q>=0 else d; p=p-d if q>=0 else p+d
+            if thermal_on:
+                T=th.advance_segment(T,dl,dzs,step2,spec['d_out'],spec['u'],spec['t_amb'],stream,pm,prm_.get('free_gas_mass_fraction'),_rho_liq(prm_),spec['jt'],spec['elev'])
+            if profile is not None:
+                x+=dl; z+=dzs; profile.append({'x_m':x,'z_m':z,'pressure_bar':max(p,0.0),'temperature_c':T})
+    return total, T
+
+
+def pipeline_dp_bar(e, q, ps, pt, fluid='production'):
+    """Signed pressure drop Ps-Pt [bar] for a pipeline (see :func:`pipeline_march`)."""
+    return pipeline_march(e,q,ps,pt,fluid)[0]
 
 
 def link_dp_bar(e, q, ps, pt, fluid='production'):

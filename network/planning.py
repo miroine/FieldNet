@@ -19,13 +19,19 @@ def apply_decline_to_forecast(fc, configs):
         for k in ('Liquid [m3/d]','Oil [m3/d]','Water [m3/d]','Gas [Sm3/d]'): r[k]*=m
     return out
 
-def run_scenarios(nodes,edges,start_date,years,step_days,scenarios):
-    results=[]
-    for s in scenarios:
-        fc=run_forecast(copy.deepcopy(nodes),copy.deepcopy(edges),start_date,years,step_days,s.get('events',[]),s.get('depletion',{}))
-        for r in fc['field']: r['Scenario']=s.get('name','Scenario')
-        results.append({'name':s.get('name','Scenario'),'forecast':fc})
-    return results
+def _run_one_scenario(args):
+    nodes,edges,start_date,years,step_days,s=args
+    fc=run_forecast(copy.deepcopy(nodes),copy.deepcopy(edges),start_date,years,step_days,s.get('events',[]),s.get('depletion',{}))
+    for r in fc['field']: r['Scenario']=s.get('name','Scenario')
+    return {'name':s.get('name','Scenario'),'forecast':fc}
+
+def run_scenarios(nodes,edges,start_date,years,step_days,scenarios,workers=1):
+    """``workers>1`` evaluates scenarios in parallel processes (same results/order as serial)."""
+    scenarios=list(scenarios)
+    if workers and workers>1 and len(scenarios)>1:
+        from network.uncertainty import parallel_map
+        return parallel_map(_run_one_scenario,[(nodes,edges,start_date,years,step_days,s) for s in scenarios],workers)
+    return [_run_one_scenario((nodes,edges,start_date,years,step_days,s)) for s in scenarios]
 
 def uncertainty_cases(base_depletion, low_factor=0.75, high_factor=1.25):
     def scaled(f):

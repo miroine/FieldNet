@@ -1,0 +1,15 @@
+apiVersion: radix.equinor.com/v1
+kind: RadixApplication
+metadata:
+  name: fieldnet
+spec:
+  environments:
+    - name: dev
+      build:
+        from: main
+  components:
+    - name: app
+      src: .
+      ports:
+        - name: http
+          port: 8501

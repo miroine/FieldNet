@@ -2,6 +2,7 @@ import math
 from physics.hydraulics import friction_factor, G
 from physics.units import DAY_TO_S as DAY, pa_to_bar
 from physics.pvt import simple_black_oil
+from physics.pvt_model import current_fluid
 
 
 def mixture_properties(liquid_rate_m3d, water_cut, gor_sm3sm3, pressure_bar, temperature_c, api=35.0, gas_sg=0.75, water_sg=1.03,
@@ -13,7 +14,8 @@ def mixture_properties(liquid_rate_m3d, water_cut, gor_sm3sm3, pressure_bar, tem
     liquid rate, so an aerated column stays light even at low liquid rates.
     """
     wc=min(max(float(water_cut),0.0),0.9999); ql=max(abs(float(liquid_rate_m3d)),1e-12)
-    st=simple_black_oil(pressure_bar,temperature_c,api,gas_sg,water_sg)
+    fl=current_fluid()
+    st=fl.state(pressure_bar,temperature_c) if fl is not None else simple_black_oil(pressure_bar,temperature_c,api,gas_sg,water_sg)
     qo_sc=ql*(1-wc); qw_sc=ql*wc
     free_gas_sc=max(0.0, qo_sc*(max(gor_sm3sm3,0.0)-st.solution_gor_sm3sm3)) + max(float(extra_free_gas_sm3d),0.0)
     q_o=qo_sc*st.oil_fvf/DAY; q_w=qw_sc/DAY
@@ -23,7 +25,10 @@ def mixture_properties(liquid_rate_m3d, water_cut, gor_sm3sm3, pressure_bar, tem
     lam_o=q_o/qtot; lam_w=q_w/qtot; lam_g=q_g/qtot
     rho=lam_o*st.oil_density_kgm3+lam_w*st.water_density_kgm3+lam_g*st.gas_density_kgm3
     mu=lam_o*st.oil_viscosity_pas+lam_w*st.water_viscosity_pas+lam_g*st.gas_viscosity_pas
-    return {'rho':rho,'mu':max(mu,1e-6),'liquid_holdup':lam_o+lam_w,'gas_fraction':lam_g,'q_line_m3s':qtot,'state':st}
+    # mass fraction of the stream that is free gas at line conditions (used by the thermal model for the Joule-Thomson weighting)
+    rho_sc_g=1.225*gas_sg; m_free=free_gas_sc*rho_sc_g; m_tot=qo_sc*(141.5/(131.5+api)*999.0)+qw_sc*999.0*water_sg+(qo_sc*max(gor_sm3sm3,0.0)+max(float(extra_free_gas_sm3d),0.0))*rho_sc_g
+    return {'rho':rho,'mu':max(mu,1e-6),'liquid_holdup':lam_o+lam_w,'gas_fraction':lam_g,'q_line_m3s':qtot,'state':st,
+            'free_gas_mass_fraction':(m_free/m_tot if m_tot>0 else 0.0)}
 
 def homogeneous_dp_bar(liquid_rate_m3d,length_m,diameter_m,roughness_m,dz_m,pressure_bar,temperature_c,water_cut=0.0,gor_sm3sm3=0.0,api=35.0,gas_sg=0.75,water_sg=1.03,
                        extra_free_gas_sm3d=0.0):

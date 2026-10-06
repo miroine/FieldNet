@@ -6,3 +6,6 @@ plotly>=5.20
 networkx>=3.2
 streamlit-agraph>=0.0.45
 pytest>=8.0
+cryptography>=42
+openpyxl>=3.1
+xlsxwriter>=3.1

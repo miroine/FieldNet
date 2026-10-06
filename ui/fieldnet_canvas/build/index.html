@@ -42,6 +42,24 @@ svg#edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z
 .edgeText{fill:#d8dee9;font-size:10px;font-weight:500;pointer-events:none;paint-order:stroke;stroke:#0e1117;stroke-width:3px}
 .status{position:absolute;left:10px;bottom:10px;background:#151b24ee;border:1px solid #394453;border-radius:6px;padding:5px 8px;z-index:5;max-width:70%;pointer-events:none}
 .msg{position:absolute;right:10px;bottom:10px;background:#151b24ee;border:1px solid #394453;border-radius:6px;padding:5px 8px;z-index:5;max-width:45%;font-size:11px;pointer-events:none}
+
+.node.joint{width:30px;min-height:30px;height:30px;padding:0;border-radius:50%;background:#2a3342}
+.node.joint .port{top:8px}.node.joint .pin{left:-8px}.node.joint .pout{right:-8px}
+.node.joint .stripe{display:none}.node.joint .jn{position:absolute;left:34px;top:6px;font-size:10px;opacity:.8;white-space:nowrap;pointer-events:none}
+.node.equip{width:124px;min-height:58px;padding:7px 10px 6px 12px;border-radius:14px}.node.equip .port{top:22px}
+.node.shaped{background:transparent;border:none;box-shadow:none;border-radius:0;padding:9px 24px 8px 24px}
+.node.shaped .stripe{display:none}
+.node.shaped svg.shp{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:0;filter:drop-shadow(0 3px 5px #0009)}
+.node.shaped svg.shp path{fill:#1a202a;stroke-width:2;vector-effect:non-scaling-stroke}
+.node.shaped svg.shp path.det{fill:none;stroke-width:1.2;opacity:.8}
+.node.shaped>*:not(svg):not(.port){position:relative;z-index:1}
+.node.shaped.sel{outline:none}.node.shaped.sel svg.shp path{stroke:#67b7ff!important;stroke-width:3}
+.node.shaped.manifold,.node.shaped.reservoir,.node.shaped.compressor{padding-left:14px;padding-right:14px}
+.node .tag{font-size:9px;opacity:.55;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pal-group{margin:6px 0 2px;font-size:10px;letter-spacing:.8px;text-transform:uppercase;opacity:.6;cursor:pointer;user-select:none}
+.pal-group:before{content:'▾ '}.pal-group.closed:before{content:'▸ '}
+.comm{stroke:#ffb74d;stroke-width:2.2;fill:none;stroke-dasharray:9 4;pointer-events:stroke;cursor:pointer}.comm.sel{stroke:#ffcc66;stroke-width:3.6}
+.palette{width:150px}
 </style></head><body>
 <div class="toolbar">
   <b>FieldNet Editor</b><span id="badge" class="badge UNSOLVED">UNSOLVED</span>
@@ -50,7 +68,7 @@ svg#edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z
   <button id="undo" title="Undo (Ctrl+Z)">Undo</button><button id="redo" title="Redo (Ctrl+Y)">Redo</button><button id="layout" title="Arrange nodes left-to-right">Auto-layout</button>
   <span class="sp"></span>
   <button id="zout" title="Zoom out">−</button><span id="zoomLabel">100%</span><button id="zin" title="Zoom in">+</button>
-  <button id="fit" title="Fit network in view">Fit</button><button id="reset" title="Reset view (100%, origin)">Reset</button>
+  <button id="fit" title="Fit network in view">Fit</button><button id="svgx" title="Export the network as an SVG drawing">SVG</button><button id="reset" title="Reset view (100%, origin)">Reset</button>
 </div>
 <div class="wrap"><div class="palette"><b>Add equipment</b><div id="pal"></div>
 <div class="hint">Drag from a component's <b>OUT</b> port (right) and drop on another component's <b>IN</b> port (left) to connect.<br><br>Drag a <b>Reservoir tank</b> onto a well or injector to assign the tank it drains (dashed line).<br><br>Drag empty space to pan · wheel to zoom.<br>Pan and zoom stay in the editor and never trigger a rerun.</div></div>
@@ -58,7 +76,10 @@ svg#edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z
 <script>
 const SCHEMA='fieldnet.graph/1';
 const TYPES=[['reservoir','Reservoir tank'],['well','Well'],['manifold','Manifold'],['separator','Separator'],['separator_stage','Separator stage'],['sink','Sink'],['oil_export','Oil export'],['gas_export','Gas export'],['water_disposal','Water disposal'],['water_source','Water source'],['gas_source','Gas source'],['water_injector','Water injector'],['gas_injector','Gas injector']];
-const COLORS={well:'#29b6f6',manifold:'#9fa8da',separator:'#66bb6a',separator_stage:'#66bb6a',sink:'#ef5350',oil_export:'#ef5350',gas_export:'#ef5350',water_disposal:'#ef5350',water_source:'#4dd0e1',gas_source:'#ffb74d',water_injector:'#4dd0e1',gas_injector:'#ffb74d',reservoir:'#8d6e63'};
+const COLORS={well:'#29b6f6',manifold:'#9fa8da',separator:'#66bb6a',separator_stage:'#66bb6a',sink:'#ef5350',oil_export:'#ef5350',gas_export:'#ef5350',water_disposal:'#ef5350',water_source:'#4dd0e1',gas_source:'#ffb74d',water_injector:'#4dd0e1',gas_injector:'#ffb74d',reservoir:'#8d6e63',joint:'#cfd8dc',choke:'#ba68c8',control_valve:'#ba68c8',pump:'#4db6ac',compressor:'#ffb74d'};
+const EQUIP=['choke','control_valve','pump','compressor'];
+const GLYPH={choke:'⧖',control_valve:'⋈',pump:'⟳',compressor:'⇶'};
+const SHAPES={"reservoir":"M0,16 Q0,0 50,0 Q100,0 100,16 V84 Q100,100 50,100 Q0,100 0,84Z","well":"M50,0 A50,50 0 1 1 50,100 A50,50 0 1 1 50,0Z","water_injector":"M50,0 A50,50 0 1 1 50,100 A50,50 0 1 1 50,0Z","gas_injector":"M50,0 A50,50 0 1 1 50,100 A50,50 0 1 1 50,0Z","manifold":"M10,0 H90 L100,50 L90,100 H10 L0,50Z","separator":"M14,0 H86 Q100,0 100,50 Q100,100 86,100 H14 Q0,100 0,50 Q0,0 14,0Z","separator_stage":"M14,0 H86 Q100,0 100,50 Q100,100 86,100 H14 Q0,100 0,50 Q0,0 14,0Z","sink":"M0,0 H80 L100,50 L80,100 H0Z","oil_export":"M0,0 H80 L100,50 L80,100 H0Z","gas_export":"M0,0 H80 L100,50 L80,100 H0Z","water_disposal":"M0,0 H80 L100,50 L80,100 H0Z","water_source":"M20,0 H100 V100 H20 L0,50Z","gas_source":"M20,0 H100 V100 H20 L0,50Z","choke":"M20,0 H80 L100,26 V74 L80,100 H20 L0,74 V26Z","control_valve":"M20,0 H80 L100,26 V74 L80,100 H20 L0,74 V26Z","pump":"M50,0 A50,50 0 1 1 50,100 A50,50 0 1 1 50,0Z","compressor":"M0,0 L100,24 V76 L0,100Z"};const SHAPE_DETAIL={"reservoir":"M0,16 Q0,32 50,32 Q100,32 100,16","separator":"M14,0 V100 M86,0 V100","separator_stage":"M14,0 V100 M86,0 V100","well":"M50,0 V16","water_injector":"M50,0 V16","gas_injector":"M50,0 V16"};const SHAPE_DASHED=["gas_injector", "gas_source", "water_injector", "water_source"];/*shapes-sync*/
 const NODE_W=154, PORT_Y=37;
 let state={nodes:[],edges:[],p:{},q:{},status:'UNSOLVED',message:''};
 let selected=null, undo=[], redo=[], rev=0, pending=null, firstRender=true;
@@ -102,8 +123,15 @@ function edgeDefault(a,b){return {id:uid(),source:a,target:b,kind:'pipeline',len
 function nodeById(id){return state.nodes.find(n=>n.id===id)}
 const DRAINABLE=['well','water_injector','gas_injector','injector'];
 function isDrain(a,b){const A=nodeById(a),B=nodeById(b);return A&&B&&A.kind==='reservoir'&&DRAINABLE.includes(B.kind)}
-function connectionProblem(a,b){if(!a||!b)return 'Drop on a component';if(a===b)return 'Cannot connect a component to itself';if(isDrain(a,b))return (nodeById(b).params||{}).reservoir_id===a?'Already drains this tank':null;if(state.edges.some(e=>e.source===a&&e.target===b))return 'Already connected';return null}
-TYPES.forEach(([k,label])=>{const b=document.createElement('button');b.textContent='+ '+label;b.onclick=()=>{const r=vp.getBoundingClientRect();const c=toWorld(r.left+r.width/2,r.top+r.height/2);const off=(state.nodes.length%5)*18;checkpoint();const n=defaults(k,Math.round(c.x-NODE_W/2+off),Math.round(c.y-37+off));state.nodes.push(n);selected=n.id;render();send();say('Added '+n.name)};document.getElementById('pal').appendChild(b)});
+function isComm(a,b){const A=nodeById(a),B=nodeById(b);return A&&B&&A.kind==='reservoir'&&B.kind==='reservoir'&&a!==b}
+function hasComm(a,b){return state.nodes.some(n=>(n.params&&n.params.communication||[]).some(c=>(n.id===a&&c.to===b)||(n.id===b&&c.to===a)))}
+function connectionProblem(a,b){if(!a||!b)return 'Drop on a component';if(a===b)return 'Cannot connect a component to itself';if(isComm(a,b))return hasComm(a,b)?'Tanks already communicate':null;if(isDrain(a,b))return (nodeById(b).params||{}).reservoir_id===a?'Already drains this tank':null;if(state.edges.some(e=>e.source===a&&e.target===b))return 'Already connected';return null}
+let palItems=TYPES.map(([k,label])=>({group:'Components',label,kind:k,pressure_bar:(['sink','separator','separator_stage','oil_export','gas_export','water_disposal'].includes(k)?35:(k==='water_source'||k==='gas_source')?180:null),params:null}));
+let palGroups=[{group:'Components',items:palItems}], palSig='';const palClosed={};
+function fromItem(it,x,y){const n=defaults(it.kind,x,y);if(it.params&&Object.keys(it.params).length)n.params=JSON.parse(JSON.stringify(it.params));if(it.pressure_bar!==null&&it.pressure_bar!==undefined)n.pressure_bar=it.pressure_bar;n.name=it.label+'-'+(state.nodes.filter(z=>z.kind===it.kind).length+1);return n}
+function buildPalette(){const host=document.getElementById('pal');host.innerHTML='';palGroups.forEach(g=>{const h=document.createElement('div');h.className='pal-group'+(palClosed[g.group]?' closed':'');h.textContent=g.group;const box=document.createElement('div');box.style.display=palClosed[g.group]?'none':'block';h.onclick=()=>{palClosed[g.group]=!palClosed[g.group];buildPalette()};host.appendChild(h);
+ g.items.forEach(it=>{const b=document.createElement('button');b.textContent='+ '+it.label;b.title=g.group+' · '+it.label;b.onclick=()=>{const r=vp.getBoundingClientRect();const c=toWorld(r.left+r.width/2,r.top+r.height/2);const off=(state.nodes.length%5)*18;checkpoint();const n=fromItem(it,Math.round(c.x-NODE_W/2+off),Math.round(c.y-37+off));state.nodes.push(n);selected=n.id;render();send();say('Added '+n.name)};box.appendChild(b)});host.appendChild(box)})}
+buildPalette();
 
 /* ---------- rendering ---------- */
 const els={};
@@ -111,24 +139,32 @@ function solvedView(){return state.status==='SOLVED'||state.status==='FAILED'}
 function render(){
  world.querySelectorAll('.node').forEach(x=>x.remove());for(const k in els)delete els[k];
  state.nodes.forEach((n,i)=>{if(!isFinite(+n.x)||!isFinite(+n.y)){n.x=60+(i%4)*200;n.y=60+Math.floor(i/4)*120}
-  const e=document.createElement('div');e.className='node'+(selected===n.id?' sel':'');e.style.left=(+n.x)+'px';e.style.top=(+n.y)+'px';e.dataset.id=n.id;
+  const e=document.createElement('div');e.className='node'+(selected===n.id?' sel':'')+(n.kind==='joint'?' joint':'')+(EQUIP.includes(n.kind)?' equip':'')+(SHAPES[n.kind]?' shaped '+n.kind:'');e.style.left=(+n.x)+'px';e.style.top=(+n.y)+'px';e.dataset.id=n.id;
   const pv=state.p[n.id];let res=(solvedView()&&pv!=null)?Number(pv).toFixed(1)+' bar':'unsolved';
   if(n.kind==='reservoir'){const pp=n.params||{};const ph={oil:'oil',gas:'gas',gas_condensate:'condensate'}[pp.fluid_phase||'oil']||'oil';const inpl=ph==='oil'?((+pp.stoiip_sm3||0)/1e6).toFixed(1)+' MSm³':((+pp.giip_sm3||0)/1e9).toFixed(2)+' GSm³';res=ph+' · '+inpl+' · '+Math.round(+pp.reservoir_pressure_bar||0)+' bar'}
-  e.innerHTML=`<span class="stripe" style="background:${COLORS[n.kind]||'#9aa5b1'}"></span><div class=kind>${n.kind.replace('_',' ')}</div><div class=nm title="${n.name}">${n.name}</div><span class="port pin" data-port="in" title="IN — drop a connection here"></span><span class="port pout" data-port="out" title="OUT — drag to another component's IN port"></span><div class="result ${res==='unsolved'?'stale':''}" style="${n.kind==='reservoir'?'color:#d7b8a8':''}">${res}</div>`;
+  const lab=(state.labels||{})[n.id];if(lab)res=lab;
+  const pp0=n.params||{};let tag='';if(n.kind==='well'||n.kind==='water_injector'||n.kind==='gas_injector'){tag=((pp0.role||(n.kind==='well'?'producer':'injector'))+' · '+(pp0.phase||(n.kind==='gas_injector'?'gas':n.kind==='water_injector'?'water':(pp0.ipr_model==='Gas'?'gas':'oil'))))}else if(n.kind==='separator'||n.kind==='separator_stage'){tag=(pp0.separator_type||'two_phase').replace('_',' ')}
+  const ports='<span class="port pin" data-port="in" title="IN — drop a connection here"></span><span class="port pout" data-port="out" title="OUT — drag to another component\'s IN port"></span>';
+  if(n.kind==='joint')e.innerHTML=`${ports}<div class="jn">${n.name}</div>`;
+  else e.innerHTML=(SHAPES[n.kind]?`<svg class="shp" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="${SHAPES[n.kind]}" style="stroke:${COLORS[n.kind]||'#9aa5b1'}"${SHAPE_DASHED.includes(n.kind)?' stroke-dasharray="6 4"':''}/>${SHAPE_DETAIL[n.kind]?`<path class="det" d="${SHAPE_DETAIL[n.kind]}" style="stroke:${COLORS[n.kind]||'#9aa5b1'}"/>`:''}</svg>`:'')+`<span class="stripe" style="background:${COLORS[n.kind]||'#9aa5b1'}"></span><div class=kind>${EQUIP.includes(n.kind)?GLYPH[n.kind]+' ':''}${n.kind.replace('_',' ')}</div><div class=nm title="${n.name}">${n.name}</div>${tag?'<div class="tag">'+tag+'</div>':''}${ports}<div class="result ${res==='unsolved'?'stale':''}" style="${n.kind==='reservoir'?'color:#d7b8a8':''}">${res}</div>`;
   world.appendChild(e);els[n.id]=e});
  draw();tools();
 }
-function portPos(id,which){const n=nodeById(id),e=els[id];if(!n)return null;const w=e?e.offsetWidth:NODE_W;return {x:(+n.x)+(which==='out'?w:0),y:(+n.y)+PORT_Y}}
+function portPos(id,which){const n=nodeById(id),e=els[id];if(!n)return null;const w=e?e.offsetWidth:NODE_W;const pe=e&&e.querySelector('.port');const py=pe?pe.offsetTop+7:PORT_Y;return {x:(+n.x)+(which==='out'?w:0),y:(+n.y)+py}}
 function curve(a,b){const dx=Math.max(45,Math.abs(b.x-a.x)/2);return `M${a.x},${a.y} C${a.x+dx},${a.y} ${b.x-dx},${b.y} ${b.x},${b.y}`}
 function draw(){
- svg.innerHTML='<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8ca9ff"/></marker></defs>';
+ svg.innerHTML='<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8ca9ff"/></marker></defs>';
  state.nodes.forEach(w=>{const rid=(w.params||{}).reservoir_id;if(!rid||!nodeById(rid))return;const a=portPos(rid,'out'),b=portPos(w.id,'in');if(!a||!b)return;const d=curve(a,b);
   const hit=document.createElementNS(SVGNS,'path');hit.setAttribute('d',d);hit.setAttribute('class','hit');hit.dataset.edge='drain:'+w.id;svg.appendChild(hit);
   const pth=document.createElementNS(SVGNS,'path');pth.setAttribute('d',d);pth.setAttribute('class','drain'+(selected==='drain:'+w.id?' sel':''));pth.dataset.edge='drain:'+w.id;svg.appendChild(pth)});
+ state.nodes.forEach(w=>{(w.params&&w.params.communication||[]).forEach(c=>{const o=nodeById(c.to);if(!o)return;const a=portPos(w.id,'out'),b=portPos(o.id,'in');if(!a||!b)return;const d=curve(a,b),id='comm:'+w.id+'>'+c.to;
+  const hit=document.createElementNS(SVGNS,'path');hit.setAttribute('d',d);hit.setAttribute('class','hit');hit.dataset.edge=id;svg.appendChild(hit);
+  const pth=document.createElementNS(SVGNS,'path');pth.setAttribute('d',d);pth.setAttribute('class','comm'+(selected===id?' sel':''));pth.dataset.edge=id;svg.appendChild(pth);
+  const t=document.createElementNS(SVGNS,'text');const mp=pth.getPointAtLength(pth.getTotalLength()/2);t.setAttribute('x',mp.x);t.setAttribute('y',mp.y-7);t.setAttribute('text-anchor','middle');t.setAttribute('class','edgeText');t.textContent='communication T='+(+c.transmissibility_m3d_bar||0);svg.appendChild(t)})});
  state.edges.forEach(ed=>{const a=portPos(ed.source,'out'),b=portPos(ed.target,'in');if(!a||!b)return;const d=curve(a,b);
   const hit=document.createElementNS(SVGNS,'path');hit.setAttribute('d',d);hit.setAttribute('class','hit');hit.dataset.edge=ed.id;svg.appendChild(hit);
-  const q=state.q[ed.id];const p=document.createElementNS(SVGNS,'path');p.setAttribute('d',d);p.setAttribute('class','edge'+(selected===ed.id?' sel':'')+(solvedView()&&q!=null&&Math.abs(q)<1e-6?' zero':''));p.setAttribute('marker-end','url(#arr)');p.dataset.edge=ed.id;svg.appendChild(p);
-  const mpt=p.getTotalLength?p.getPointAtLength(p.getTotalLength()/2):{x:(a.x+b.x)/2,y:(a.y+b.y)/2};const t=document.createElementNS(SVGNS,'text');t.setAttribute('x',mpt.x);t.setAttribute('y',mpt.y-7);t.setAttribute('text-anchor','middle');t.setAttribute('class','edgeText');t.textContent=ed.kind+((solvedView()&&q!=null)?' • '+Number(q).toFixed(0)+' m³/d':'');svg.appendChild(t)});
+  const q=state.q[ed.id];const p=document.createElementNS(SVGNS,'path');p.setAttribute('d',d);p.setAttribute('class','edge'+(selected===ed.id?' sel':'')+(solvedView()&&q!=null&&Math.abs(q)<1e-6?' zero':''));p.setAttribute('marker-end','url(#arr)');p.dataset.edge=ed.id;if(solvedView()&&state.ew&&state.ew[ed.id]&&selected!==ed.id)p.style.strokeWidth=state.ew[ed.id];svg.appendChild(p);
+  const mpt=p.getTotalLength?p.getPointAtLength(p.getTotalLength()/2):{x:(a.x+b.x)/2,y:(a.y+b.y)/2};const t=document.createElementNS(SVGNS,'text');t.setAttribute('x',mpt.x);t.setAttribute('y',mpt.y-7);t.setAttribute('text-anchor','middle');t.setAttribute('class','edgeText');t.textContent=(solvedView()&&state.elabels&&state.elabels[ed.id])||(ed.kind+((solvedView()&&q!=null)?' • '+Number(q).toFixed(0)+' m³/d':''));svg.appendChild(t)});
  if(mode&&mode.type==='connect'&&mode.cur){const a=portPos(mode.from,'out');const l=document.createElementNS(SVGNS,'path');l.setAttribute('d',curve(a,mode.cur));l.setAttribute('class','live');svg.appendChild(l)}
 }
 function tools(){document.getElementById('undo').disabled=!undo.length;document.getElementById('redo').disabled=!redo.length;document.getElementById('del').disabled=!selected;document.getElementById('copy').disabled=!nodeById(selected)}
@@ -151,14 +187,15 @@ vp.addEventListener('pointermove',ev=>{
  if(mode.type==='drag'){const dx=(ev.clientX-mode.sx)/view.k,dy=(ev.clientY-mode.sy)/view.k;if(!mode.moved&&Math.abs(dx)+Math.abs(dy)<3/view.k)return;if(!mode.moved){mode.moved=true;undo.push(mode.snap);if(undo.length>60)undo.shift();redo=[]}
   const n=nodeById(mode.id);n.x=Math.round(mode.ox+dx);n.y=Math.round(mode.oy+dy);els[n.id].style.left=n.x+'px';els[n.id].style.top=n.y+'px';draw();return}
  if(mode.type==='connect'){mode.cur=toWorld(ev.clientX,ev.clientY);clearTargets();const tid=nodeUnder(ev.clientX,ev.clientY);mode.target=tid;
-  if(tid&&tid!==mode.from){const prob=connectionProblem(mode.from,tid);const pin=els[tid]&&els[tid].querySelector('.pin');if(pin){pin.classList.add(prob?'bad':'target');const p=portPos(tid,'in');if(!prob)mode.cur=p}say(prob||(isDrain(mode.from,tid)?('Release: '+nodeById(tid).name+' drains this tank'):('Release to connect to '+nodeById(tid).name)))}else say('Drop on the target IN port');draw()}
+  if(tid&&tid!==mode.from){const prob=connectionProblem(mode.from,tid);const pin=els[tid]&&els[tid].querySelector('.pin');if(pin){pin.classList.add(prob?'bad':'target');const p=portPos(tid,'in');if(!prob)mode.cur=p}say(prob||(isComm(mode.from,tid)?('Release: tanks communicate'):isDrain(mode.from,tid)?('Release: '+nodeById(tid).name+' drains this tank'):('Release to connect to '+nodeById(tid).name)))}else say('Drop on the target IN port');draw()}
 });
 function endPointer(ev){
  if(!mode)return;const m=mode;mode=null;vp.classList.remove('panning','connecting');clearTargets();
  if(m.type==='pan'){if(!m.moved&&selected){selected=null;render();send()}}
  else if(m.type==='drag'){if(m.moved){send();say('Moved')}else{selected=m.id;render();send()}}
  else if(m.type==='connect'){const tid=nodeUnder(ev.clientX,ev.clientY)||m.target;const prob=connectionProblem(m.from,tid);
-  if(!prob&&isDrain(m.from,tid)){checkpoint();const w=nodeById(tid);w.params=w.params||{};w.params.reservoir_id=m.from;selected=tid;render();send();say(w.name+' now drains '+nodeById(m.from).name)}
+  if(!prob&&isComm(m.from,tid)){checkpoint();const A=nodeById(m.from);A.params=A.params||{};(A.params.communication=A.params.communication||[]).push({to:tid,transmissibility_m3d_bar:100,max_transfer_m3d:null});selected='comm:'+m.from+'>'+tid;render();send();say('Tanks '+A.name+' ⇄ '+nodeById(tid).name+' now communicate')}
+  else if(!prob&&isDrain(m.from,tid)){checkpoint();const w=nodeById(tid);w.params=w.params||{};w.params.reservoir_id=m.from;selected=tid;render();send();say(w.name+' now drains '+nodeById(m.from).name)}
   else if(!prob){checkpoint();const e=edgeDefault(m.from,tid);state.edges.push(e);selected=e.id;render();send();say('Connected '+nodeById(m.from).name+' → '+nodeById(tid).name)}else{draw();say(tid&&tid!==m.from?prob:'Connection cancelled')}}
  flushPending()
 }
@@ -166,7 +203,19 @@ function flushPending(){if(pending){const a=pending;pending=null;applyArgs(a)}}
 vp.addEventListener('pointerup',endPointer);vp.addEventListener('pointercancel',endPointer);
 
 /* ---------- toolbar edits (these change the graph and are sent) ---------- */
-function deleteSelection(){if(!selected)return;checkpoint();if(String(selected).startsWith('drain:')){const w=nodeById(selected.slice(6));if(w&&w.params)delete w.params.reservoir_id;selected=null;render();send();say('Drainage link removed');return}if(nodeById(selected)){state.nodes=state.nodes.filter(n=>n.id!==selected);state.edges=state.edges.filter(e=>e.source!==selected&&e.target!==selected)}else state.edges=state.edges.filter(e=>e.id!==selected);selected=null;render();send();say('Deleted')}
+function deleteSelection(){if(!selected)return;checkpoint();if(String(selected).startsWith('comm:')){const [A,B]=selected.slice(5).split('>');const n=nodeById(A);if(n&&n.params&&n.params.communication){n.params.communication=n.params.communication.filter(c=>c.to!==B);if(!n.params.communication.length)delete n.params.communication}selected=null;render();send();say('Communication link removed');return}if(String(selected).startsWith('drain:')){const w=nodeById(selected.slice(6));if(w&&w.params)delete w.params.reservoir_id;selected=null;render();send();say('Drainage link removed');return}if(nodeById(selected)){state.nodes=state.nodes.filter(n=>n.id!==selected);state.edges=state.edges.filter(e=>e.source!==selected&&e.target!==selected)}else state.edges=state.edges.filter(e=>e.id!==selected);selected=null;render();send();say('Deleted')}
+function exportSVG(){const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;state.nodes.forEach(n=>{const e=els[n.id];const w=e?e.offsetWidth:NODE_W,h=e?e.offsetHeight:74;x0=Math.min(x0,+n.x);y0=Math.min(y0,+n.y);x1=Math.max(x1,+n.x+w+120);y1=Math.max(y1,+n.y+h)});if(!state.nodes.length){say('Nothing to export');return}
+ const pad=30;x0-=pad;y0-=pad;x1+=pad;y1+=pad;let o=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x0} ${y0} ${x1-x0} ${y1-y0}" width="${x1-x0}" height="${y1-y0}" font-family="Segoe UI,Arial,sans-serif"><rect x="${x0}" y="${y0}" width="${x1-x0}" height="${y1-y0}" fill="#ffffff"/><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#456"/></marker></defs>`;
+ const mid=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+ state.nodes.forEach(w=>{const rid=(w.params||{}).reservoir_id;if(rid&&nodeById(rid)){const a=portPos(rid,'out'),b=portPos(w.id,'in');o+=`<path d="${curve(a,b)}" fill="none" stroke="#a1887f" stroke-width="2" stroke-dasharray="3 5"/>`}(w.params&&w.params.communication||[]).forEach(c=>{if(nodeById(c.to)){const a=portPos(w.id,'out'),b=portPos(c.to,'in');o+=`<path d="${curve(a,b)}" fill="none" stroke="#e08a00" stroke-width="2" stroke-dasharray="9 4"/>`}})});
+ state.edges.forEach(ed=>{const a=portPos(ed.source,'out'),b=portPos(ed.target,'in');if(!a||!b)return;const q=state.q[ed.id];o+=`<path d="${curve(a,b)}" fill="none" stroke="#456" stroke-width="${(solvedView()&&state.ew&&state.ew[ed.id])||2}" marker-end="url(#a)"/>`;const m=mid(a,b);o+=`<text x="${m.x}" y="${m.y-6}" font-size="10" text-anchor="middle" fill="#234">${esc((solvedView()&&state.elabels&&state.elabels[ed.id])||(ed.kind+((solvedView()&&q!=null)?' • '+Number(q).toFixed(0)+' m³/d':'')))}</text>`});
+ state.nodes.forEach(n=>{const e=els[n.id];const w=e?e.offsetWidth:NODE_W,h=e?e.offsetHeight:74,c=COLORS[n.kind]||'#9aa5b1';
+  if(n.kind==='joint'){o+=`<circle cx="${+n.x+15}" cy="${+n.y+15}" r="13" fill="#eceff1" stroke="#455a64" stroke-width="1.5"/><text x="${+n.x+34}" y="${+n.y+19}" font-size="10" fill="#234">${esc(n.name)}</text>`;return}
+  const lab=(state.labels||{})[n.id]||(solvedView()&&state.p[n.id]!=null?Number(state.p[n.id]).toFixed(1)+' bar':'');
+  o+=`<rect x="${n.x}" y="${n.y}" width="${w}" height="${h}" rx="9" fill="#f7f9fb" stroke="#455a64" stroke-width="1.3"/><rect x="${n.x}" y="${n.y}" width="5" height="${h}" rx="2" fill="${c}"/><text x="${+n.x+12}" y="${+n.y+17}" font-size="8" fill="#667" letter-spacing=".6">${esc(n.kind.replace('_',' ').toUpperCase())}</text><text x="${+n.x+12}" y="${+n.y+34}" font-size="12" font-weight="600" fill="#123">${esc(n.name)}</text><text x="${+n.x+12}" y="${+n.y+h-10}" font-size="10" fill="#046">${esc(lab)}</text><circle cx="${n.x}" cy="${+n.y+(portPos(n.id,'in').y-n.y)}" r="5" fill="#fff" stroke="#456"/><circle cx="${+n.x+w}" cy="${+n.y+(portPos(n.id,'out').y-n.y)}" r="5" fill="#fff" stroke="#456"/>`});
+ o+='</svg>';const blob=new Blob([o],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const l=document.createElement('a');l.href=url;l.download='fieldnet_network.svg';document.body.appendChild(l);l.click();setTimeout(()=>{URL.revokeObjectURL(url);l.remove()},500);say('SVG exported')}
+document.getElementById('svgx').onclick=exportSVG;
 document.getElementById('del').onclick=deleteSelection;
 document.getElementById('copy').onclick=()=>{const n=nodeById(selected);if(!n)return;checkpoint();const z=JSON.parse(JSON.stringify(n));z.id=uid();z.name+=' COPY';z.x=(+z.x||0)+35;z.y=(+z.y||0)+35;state.nodes.push(z);selected=z.id;render();send()};
 document.getElementById('undo').onclick=()=>{if(!undo.length)return;redo.push(snap());restore(undo.pop())};
@@ -175,8 +224,9 @@ document.getElementById('layout').onclick=()=>{checkpoint();const indeg={},adj={
 window.addEventListener('keydown',ev=>{if((ev.key==='Delete'||ev.key==='Backspace')&&selected){ev.preventDefault();deleteSelection()}else if(ev.key==='Escape'&&mode&&mode.type==='connect'){mode=null;vp.classList.remove('connecting');clearTargets();draw();say('Connection cancelled');flushPending()}else if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'){document.getElementById('undo').click()}else if((ev.ctrlKey||ev.metaKey)&&ev.key==='y'){document.getElementById('redo').click()}});
 
 /* ---------- args from Python (graph + solve state) ---------- */
-function applyArgs(a){pending=null;state.nodes=JSON.parse(JSON.stringify(a.nodes||[]));state.edges=JSON.parse(JSON.stringify(a.edges||[]));state.p=a.pressures||{};state.q=a.rates||{};
- if(a.selected!==undefined&&a.selected!==null)selected=a.selected;if(selected&&!nodeById(selected)&&!state.edges.some(e=>e.id===selected))selected=null;
+function applyArgs(a){pending=null;state.labels=a.labels||{};state.elabels=a.edge_labels||{};state.ew=a.edge_widths||{};if(a.palette&&a.palette.length){const sg=JSON.stringify(a.palette);if(sg!==palSig){palSig=sg;palGroups=a.palette;buildPalette()}}
+ state.nodes=JSON.parse(JSON.stringify(a.nodes||[]));state.edges=JSON.parse(JSON.stringify(a.edges||[]));state.p=a.pressures||{};state.q=a.rates||{};
+ if(a.selected!==undefined&&a.selected!==null)selected=a.selected;if(selected&&!nodeById(selected)&&!state.edges.some(e=>e.id===selected)&&!String(selected).startsWith('drain:')&&!String(selected).startsWith('comm:'))selected=null;
  setStatus(a.status,a.status_message);render();if(firstRender){firstRender=false;fit()}}
 window.addEventListener('message',ev=>{const d=ev.data;if(!d||d.type!=='streamlit:render')return;const a=d.args||{};frame(a.height||860);document.querySelector('.wrap').style.height=((a.height||860)-48)+'px';applyView();
  if(mode){pending=a;return} // never yank the graph away mid-gesture

@@ -45,7 +45,8 @@ def solve_professional(nodes, edges, residual_tolerance=1e-4, continuation_steps
     info['quality_gate']='PASS' if info.get('success') and maxr<=residual_tolerance else 'FAIL'
     info['continuation_history']=history
     info['active_constraints']=active_constraints(info.get('constraints',[]))
-    audit=reconstruct_physical_residuals(nodes,edges,p,q)
+    from solver.steady_state import apply_fluid_follow
+    audit=reconstruct_physical_residuals(nodes,apply_fluid_follow(edges,info),p,q)
     info['physical_residual_audit']=audit
     info['physical_quality_gate']='PASS' if audit['max_pressure_residual_bar'] <= residual_tolerance*10.0 and audit['max_mass_residual_m3d'] <= residual_tolerance*1000.0 else 'FAIL'
     if info['physical_quality_gate']!='PASS': info['quality_gate']='FAIL'

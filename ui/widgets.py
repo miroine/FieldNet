@@ -40,10 +40,18 @@ def to_builtin(x):
     return x
 
 
+def _state(st=None):
+    """The real session state. ``st`` arguments of the synced_* helpers may be a column/container (widget host), which has no session_state."""
+    ss = getattr(st, 'session_state', None)
+    if ss is not None and not callable(ss): return ss
+    import streamlit
+    return streamlit.session_state
+
+
 def _seed(st, key, model_value):
     mk='_model__'+key
-    if key not in st.session_state or st.session_state.get(mk)!=model_value:
-        st.session_state[key]=model_value
+    if key not in _state(st) or _state(st).get(mk)!=model_value:
+        _state(st)[key]=model_value
     return mk
 
 
@@ -58,7 +66,7 @@ def synced_number(st, label, model_value, key, min_value=None, max_value=None, s
     if step is not None: kw['step']=float(step)
     if fmt is not None: kw['format']=fmt
     out=float((container or st).number_input(label,**kw))
-    st.session_state[mk]=out
+    _state(st)[mk]=out
     return out
 
 
@@ -66,7 +74,7 @@ def synced_slider(st, label, min_value, max_value, model_value, key):
     v=min(max(float(model_value),float(min_value)),float(max_value))
     mk=_seed(st,key,v)
     out=float(st.slider(label,float(min_value),float(max_value),key=key))
-    st.session_state[mk]=out
+    _state(st)[mk]=out
     return out
 
 
@@ -74,19 +82,19 @@ def synced_select(st, label, options, model_value, key, format_func=str):
     options=list(options); v=model_value if model_value in options else options[0]
     mk=_seed(st,key,v)
     out=st.selectbox(label,options,key=key,format_func=format_func)
-    st.session_state[mk]=out
+    _state(st)[mk]=out
     return out
 
 
 def synced_text(st, label, model_value, key):
     v=str(model_value); mk=_seed(st,key,v)
     out=st.text_input(label,key=key)
-    st.session_state[mk]=out
+    _state(st)[mk]=out
     return out
 
 
 def synced_checkbox(st, label, model_value, key):
     v=bool(model_value); mk=_seed(st,key,v)
     out=bool(st.checkbox(label,key=key))
-    st.session_state[mk]=out
+    _state(st)[mk]=out
     return out

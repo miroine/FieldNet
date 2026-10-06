@@ -26,7 +26,14 @@ def forecast_kpis(fc, plateau_fraction=0.9):
     stoiip = sum((r.get('Cum oil [Sm3]', 0.0) / (r['RF oil [%]'] / 100.0)) for r in rec if r.get('Phase') == 'oil' and r.get('RF oil [%]', 0) > 0)
     cum_oil = float(rows[-1].get('Cumulative oil [Sm3]', 0.0))
     first = next((r['Date'] for r in rows if float(r.get('Oil [m3/d]', 0.0)) > 1e-6), None)
-    return {'first_oil': first, 'peak_oil_m3d': peak, 'plateau_years': plateau_days / 365.25,
+    gas = [float(r.get('Gas [Sm3/d]', 0.0)) for r in rows]; gpeak = max(gas) if gas else 0.0; gplat = 0.0
+    if gpeak > 0:
+        for i in range(len(rows) - 1):
+            if gas[i] >= plateau_fraction * gpeak: gplat += days[i + 1] - days[i]
+    giip = sum((r.get('Cum gas [Sm3]', 0.0) / (r['RF gas [%]'] / 100.0)) for r in rec if r.get('Phase') in ('gas', 'gas_condensate', 'condensate') and r.get('RF gas [%]', 0) > 0)
+    cum_gas = float(rows[-1].get('Cumulative gas [Sm3]', 0.0))
+    return {'peak_gas_sm3d': gpeak, 'plateau_gas_years': gplat / 365.25, 'final_gas_sm3d': gas[-1], 'rf_gas_pct': 100.0 * cum_gas / giip if giip > 0 else None,
+            'first_oil': first, 'peak_oil_m3d': peak, 'plateau_years': plateau_days / 365.25,
             'cum_oil_sm3': cum_oil, 'cum_gas_sm3': float(rows[-1].get('Cumulative gas [Sm3]', 0.0)),
             'cum_water_m3': float(rows[-1].get('Cumulative water [m3]', 0.0)),
             'rf_oil_pct': 100.0 * cum_oil / stoiip if stoiip > 0 else None,
@@ -75,32 +82,44 @@ def apply_scenario(nodes, edges, sc):
     return ns, es
 
 
-def run_scenarios(nodes, edges, scenarios, start, years, step_days, enforce_constraints=True, progress=None):
-    out = []
-    for i, sc in enumerate(scenarios):
-        ns, es = apply_scenario(nodes, edges, sc)
-        fc = run_forecast(ns, es, start, years, step_days, sc.get('events'), None, enforce_constraints=enforce_constraints)
-        out.append({'name': sc.get('name', f'Case {i+1}'), 'scenario': sc, 'forecast': fc, 'kpis': forecast_kpis(fc)})
-        if progress: progress(i + 1, len(scenarios))
-    return out
+def _scenario_job(args):
+    nodes, edges, sc, start, years, step_days, enforce_constraints, step_solver = args
+    ns, es = apply_scenario(nodes, edges, sc)
+    fc = run_forecast(ns, es, start, years, step_days, sc.get('events'), None, enforce_constraints=enforce_constraints, step_solver=step_solver)
+    return {'scenario': sc, 'forecast': fc, 'kpis': forecast_kpis(fc)}
 
 
-def well_count_study(nodes, edges, order, start, years, step_days, enforce_constraints=True, min_gain_fraction=0.05, progress=None):
+def run_scenarios(nodes, edges, scenarios, start, years, step_days, enforce_constraints=True, progress=None, step_solver=None, workers=1):
+    """``workers>1`` runs the scenarios in parallel processes (not with a ``step_solver`` closure, which cannot be pickled: serial then)."""
+    jobs = [(nodes, edges, sc, start, years, step_days, enforce_constraints, step_solver) for sc in scenarios]
+    if workers and int(workers) > 1 and len(jobs) > 1 and step_solver is None:
+        from network.uncertainty import parallel_map
+        res = parallel_map(_scenario_job, jobs, int(workers))
+    else:
+        res = []
+        for i, j in enumerate(jobs):
+            res.append(_scenario_job(j))
+            if progress: progress(i + 1, len(jobs))
+    return [{'name': sc.get('name', f'Case {i+1}'), **r} for i, (sc, r) in enumerate(zip(scenarios, res))]
+
+
+def well_count_study(nodes, edges, order, start, years, step_days, enforce_constraints=True, min_gain_fraction=0.05, progress=None, step_solver=None, workers=1):
     """Forecast with the first k producers of ``order`` for k = 1..N.
 
     Recommendation: the largest k whose *last* well still adds at least ``min_gain_fraction``
     of the cumulative oil achieved with k-1 wells (diminishing-returns rule).
     """
     rows = []; prev = None
+    results = run_scenarios(nodes, edges, [{'name': f'{k} wells', 'wells': order[:k]} for k in range(1, len(order) + 1)], start, years, step_days, enforce_constraints,
+                            progress=progress, step_solver=step_solver, workers=workers)
     for k in range(1, len(order) + 1):
-        r = run_scenarios(nodes, edges, [{'name': f'{k} wells', 'wells': order[:k]}], start, years, step_days, enforce_constraints)[0]
+        r = results[k - 1]
         kp = r['kpis']; cum = kp.get('cum_oil_sm3', 0.0)
         gain = cum - prev if prev is not None else cum
         rows.append({'Wells': k, 'Added well': order[k - 1], 'Cum oil [Sm3]': cum, 'Incremental oil [Sm3]': gain,
                      'Incremental [%]': 100.0 * gain / prev if prev else None, 'RF oil [%]': kp.get('rf_oil_pct'),
                      'Peak oil [m3/d]': kp.get('peak_oil_m3d'), 'Plateau [years]': kp.get('plateau_years'), '_forecast': r['forecast']})
         prev = cum
-        if progress: progress(k, len(order))
     rec = 1
     for r in rows[1:]:
         if r['Incremental [%]'] is not None and r['Incremental [%]'] >= 100 * min_gain_fraction: rec = r['Wells']

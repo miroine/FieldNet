@@ -15,7 +15,7 @@ and had no notion of shut-in, rate caps or lift. The complementarity form expres
 directly, and is exactly the condition GAP-style network solvers impose on wells.
 """
 from __future__ import annotations
-import math
+import math, copy
 from collections import defaultdict, deque
 import numpy as np
 from scipy.optimize import least_squares
@@ -70,7 +70,187 @@ def _initial_pressures(nodes, links, byid):
     return out
 
 
+RECOVERY_BUDGET_S=20.0      # wall-clock allowed for the recovery chain of one solve
+CONVERGED_RESIDUAL=1e-4     # scaled residual above which a stalled least-squares exit (xtol/ftol) is NOT reported as a solution
+
+
+def _poor(info): return (not info) or float(info.get("max_abs_residual", 0.0)) > 1e-4
+
+
+def solve_network_robust(nodes, edges, *, initial_guess=None, **kw):
+    """``solve_network`` that does not accept a stalled exit.
+
+    A warm start taken from a very different operating point (typically: wells whose natural rate is far above the facility limit,
+    then choked) can stall the trust-region iteration with a small but non-zero residual. Recovery order:
+    1. cold start; 2. continuation on the well rate - wells are first held to a small fraction of their natural rate (a regime
+    with little friction, always solvable) and the limit is relaxed in steps, each step warm-started from the previous one.
+    Returns the best result found (lowest residual)."""
+    import time as _t
+    t_end=_t.perf_counter()+float(RECOVERY_BUDGET_S)
+    quick=dict(kw); quick['max_nfev']=min(int(kw.get('max_nfev',3000)),300)
+    best=solve_network(nodes,edges,initial_guess=initial_guess,**quick)      # short budget: a well-posed case converges in a few dozen evaluations
+    if not _poor(best[2]): return best
+    cands=[best]
+    if _t.perf_counter()>t_end: return _tag(best,'stalled (time budget)')
+    if initial_guess:
+        r=solve_network(nodes,edges,initial_guess=None,**quick); cands.append(r)
+        if not _poor(r[2]): return _tag(r,'cold start')
+    if _t.perf_counter()>t_end: return _tag(min(cands,key=lambda c: float(c[2].get('max_abs_residual',1e9))),'stalled (time budget)')
+    try:
+        r=_continuation(nodes,edges,min(cands,key=lambda c: float(c[2].get('max_abs_residual',1e9))),kw,t_end)
+        if r is not None:
+            cands.append(r)
+            if not _poor(r[2]): return _tag(r,'rate continuation')
+    except Exception: pass
+    if _t.perf_counter()>t_end: return _tag(min(cands,key=lambda c: float(c[2].get('max_abs_residual',1e9))),'stalled (time budget)')
+    r=solve_network(nodes,edges,initial_guess=initial_guess,**kw); cands.append(r)   # last resort: the full-budget solve (slow crawl)
+    out=min(cands,key=lambda c: float(c[2].get('max_abs_residual',1e9)))
+    return out
+
+
+def _tag(r, how):
+    info=dict(r[2]); info['recovery']=how; return (r[0],r[1],info,r[3])
+
+
+def _continuation(nodes, edges, seed, kw, t_end=None):
+    """Rate continuation. Every producer is held to a fraction of its natural rate (found at the seed pressures): the largest
+    fraction that solves cleanly is the anchor, then the cap is relaxed in steps of x2.5, each step warm-started from the previous
+    one, ending on the original model (user / network caps restored, nothing added)."""
+    import copy as _c
+    from physics.well_model import well_settings, solve_well_rate
+    quick=dict(kw); quick['max_nfev']=min(int(kw.get('max_nfev',3000)),300)
+    p0=seed[0] or {}
+    ns=_c.deepcopy(nodes); base={}
+    for n in ns:
+        if n.get('kind')=='well':
+            prm=n.setdefault('params',{}); s=well_settings(prm); q,_=solve_well_rate(p0.get(n['id'],50.0),s)
+            if math.isfinite(s['max_rate']): q=min(q,s['max_rate'])
+            base[n['id']]=(max(q,1.0),prm.get('_network_cap_m3d'))
+    if not base: return None
+    def setcaps(f):
+        for n in ns:
+            if n['id'] in base:
+                q,old=base[n['id']]; cap=q*f if f<1.0 else old
+                if cap is None: n['params'].pop('_network_cap_m3d',None)
+                else: n['params']['_network_cap_m3d']=min(cap,old) if old is not None else cap
+    def run(f,guess):
+        setcaps(f); r=solve_network(ns,edges,initial_guess=guess,**quick)
+        return r,{'pressures':r[0],'flows':r[1],'well_rates':(r[2].get('well_rates') or {})}
+    anchor=None; guess=None
+    import time as _t
+    for f in (0.5,0.2,0.08,0.03):
+        if t_end is not None and _t.perf_counter()>t_end: return None
+        r,g=run(f,None)
+        if not _poor(r[2]): anchor=f; guess=g; break
+    if anchor is None: return None
+    f=anchor
+    while f<1.0:
+        f=min(f*2.5,1.0); r,guess=run(f,guess)
+    return r
+
+
 def solve_network(nodes, edges, *, x_scale="jac", max_nfev=3000, initial_guess=None, reseed_attempts=2):
+    """Solve the steady-state network. Inline equipment nodes (choke/valve/pump/compressor) are expanded into
+    inlet/outlet junctions + an internal link and folded back afterwards (network/equipment.py)."""
+    from network.equipment import has_inline, expand_inline_equipment, expand_guess, collapse_results
+    if has_inline(nodes):
+        ns, es, mp = expand_inline_equipment(nodes, edges)
+        return collapse_results(solve_network(ns, es, x_scale=x_scale, max_nfev=max_nfev, initial_guess=expand_guess(initial_guess, mp), reseed_attempts=reseed_attempts), mp)
+    return _solve_network_core(nodes, edges, x_scale=x_scale, max_nfev=max_nfev, initial_guess=initial_guess, reseed_attempts=reseed_attempts)
+
+
+FLUID_FOLLOW_TOL_GOR = 0.05     # relative GOR change that triggers a consistency re-solve
+FLUID_FOLLOW_TOL_WC = 0.02      # absolute water-cut change that triggers it
+FLUID_FOLLOW_MAX_PASSES = 3
+
+
+def _solve_network_core(nodes, edges, *, x_scale="jac", max_nfev=3000, initial_guess=None, reseed_attempts=2, follow_wells=True):
+    """Solve, then make the flowline fluid consistent with what the wells actually produce.
+
+    Flowline/compressor ``gor_sm3sm3``, ``water_cut``, ``api`` and ``gas_sg`` are inputs of the line hydraulics, but they describe the
+    fluid the upstream wells deliver. When a tank's CGR / GOR / water cut changes (or the user edits a well) a stale line value makes the lines carry the
+    wrong gas volume (e.g. 16x too much gas after raising the CGR) and the solve gets slow or does not converge. After each solve the blended fluid of the
+    stream in every line is computed from the solved well rates and, if it differs materially, the network is re-solved with it (warm-started,
+    max 3 passes). A line can opt out with ``params['follow_wells']=False``."""
+    kw=dict(x_scale=x_scale,max_nfev=max_nfev,reseed_attempts=reseed_attempts)
+    cur=edges; passes=0
+    if follow_wells:
+        try: cur=_preblend(nodes,edges)       # fluids consistent BEFORE the first solve: a stale line fluid is the usual reason for a stalled first pass
+        except Exception: cur=edges
+    res=_solve_network_once(nodes,cur,initial_guess=initial_guess,**kw)
+    if not follow_wells: return res
+    try:
+        from network.fluid_blend import propagate_blend_to_edges
+        for _ in range(FLUID_FOLLOW_MAX_PASSES):
+            p,q,info,d=res
+            if not p or not math.isfinite(float(info.get('max_abs_residual',0.0))) or not any(float(v.get('liquid_rate_m3d',0.0))>1e-9 for v in d.values()): break
+            new=propagate_blend_to_edges(nodes,cur,res,kinds=('pipeline','compressor'))
+            byid={e['id']:e for e in cur}; changed=0
+            for e in new:
+                o=byid.get(e['id']); prm=e.get('params') or {}
+                if o is None or not prm.get('fluid_blend') or (o.get('params') or {}).get('follow_wells') is False:
+                    if o is not None and (o.get('params') or {}).get('follow_wells') is False: e['params']=copy.deepcopy(o.get('params'))
+                    continue
+                op=o.get('params') or {}; og=float(op.get('gor_sm3sm3',100.0) or 0.0); ng=float(prm.get('gor_sm3sm3',og)); ow=float(op.get('water_cut',0.2) or 0.0); nw=float(prm.get('water_cut',ow))
+                if abs(ng-og)>FLUID_FOLLOW_TOL_GOR*max(og,1.0) or abs(nw-ow)>FLUID_FOLLOW_TOL_WC: changed+=1
+            if not changed: break
+            guess={'pressures':p,'flows':q,'well_rates':info.get('well_rates') or {}}
+            r2=_solve_network_once(nodes,new,initial_guess=guess,**kw)
+            if float(r2[2].get('max_abs_residual',1e9))>max(1e-4,float(info.get('max_abs_residual',0.0))*10): break     # never trade a converged solve for a worse one
+            res=r2; cur=new; passes+=1
+    except Exception: pass
+    if cur is not edges:
+        old={e['id']:e for e in edges}; ff={}
+        for e in cur:
+            o=old.get(e['id'])
+            if o is not None and e is not o and (e.get('params') or {}).get('fluid_blend'):
+                ff[e['id']]={k:float(e['params'][k]) for k in ('gor_sm3sm3','water_cut','api','gas_sg') if e['params'].get(k) is not None}
+        info=dict(res[2]); info['fluid_follow']=ff
+        if passes: info['fluid_follow_passes']=passes
+        res=(res[0],res[1],info,res[3])
+    return res
+
+
+def apply_fluid_follow(edges, info):
+    """Edges as the solver used them (line fluid = blended well fluid). ``edges`` itself is not modified."""
+    ff=(info or {}).get('fluid_follow') or {}
+    if not ff: return edges
+    out=[]
+    for e in edges:
+        if e['id'] in ff: e=copy.deepcopy(e); e.setdefault('params',{}).update(ff[e['id']])
+        out.append(e)
+    return out
+
+
+def _preblend(nodes, edges):
+    """Line fluids from the wells' own fluid, weighted by each well's natural rate at the mean fixed pressure (no solve needed)."""
+    from network.fluid_blend import propagate_blend_to_edges
+    links=links_of(edges); byid={n['id']:n for n in nodes}
+    fixed=[v for v in (fixed_pressure(n) for n in nodes) if v is not None]; p_ref=float(np.mean(fixed)) if fixed else 50.0
+    details={}; wq={}
+    for n in nodes:
+        if n.get('kind')!='well': continue
+        sx=well_settings(n.get('params',{}) or {})
+        if not sx['open']: continue
+        q,_=solve_well_rate(p_ref,sx)
+        if math.isfinite(sx['max_rate']): q=min(q,sx['max_rate'])
+        q=max(float(q),0.0); wq[n['id']]=q; wc=sx['water_cut']; oil=q*(1-wc)
+        details[n['id']]={'liquid_rate_m3d':q,'oil_rate_m3d':oil,'water_rate_m3d':q*wc,'gas_rate_sm3d':oil*sx['gor']}
+    if not wq: return edges
+    flows=_initial_link_flows(nodes,links,wq,{})
+    for e in links: flows.setdefault(e['id'],0.0)
+    new=propagate_blend_to_edges(nodes,edges,({}, flows, {}, details),kinds=('pipeline','compressor'))
+    old={e['id']:e for e in edges}; out=[]
+    for e in new:
+        o=old.get(e['id'])
+        if o is None or (o.get('params') or {}).get('follow_wells') is False or not (e.get('params') or {}).get('fluid_blend'): out.append(o if o is not None else e); continue
+        op=o.get('params') or {}; prm=e['params']; og=float(op.get('gor_sm3sm3',100.0) or 0.0)
+        material=abs(float(prm.get('gor_sm3sm3',og))-og)>FLUID_FOLLOW_TOL_GOR*max(og,1.0) or abs(float(prm.get('water_cut',0.0))-float(op.get('water_cut',0.2) or 0.0))>FLUID_FOLLOW_TOL_WC
+        out.append(e if material else o)
+    return out
+
+
+def _solve_network_once(nodes, edges, *, x_scale="jac", max_nfev=3000, initial_guess=None, reseed_attempts=2):
     from network.reservoir_mb import ensure_tank_links
     nodes=ensure_tank_links(nodes)
     # Unconnected components have no equations that can determine them; leave them out.
@@ -245,10 +425,11 @@ def solve_network(nodes, edges, *, x_scale="jac", max_nfev=3000, initial_guess=N
         elif e.get('kind')=='compressor':
             qg=abs(q)*fnum(prm,'gor_sm3sm3',100); equipment.append({'Equipment':e.get('name',e['id']),'Type':'Compressor','Rate [m3/d]':q,'Gas [Sm3/d]':qg,'Suction [bar]':pressures[e['source']],'Discharge [bar]':pressures[e['target']],'Power [kW]':compressor_power_kw(qg,pressures[e['source']],pressures[e['target']],fnum(prm,'efficiency',.75))})
     res=residual(x)
-    info={'success':bool(sol.success),'cost':float(sol.cost),'message':str(sol.message),'max_abs_residual':float(np.max(np.abs(res))) if len(res) else 0.0,
+    _res_max=float(np.max(np.abs(res))) if len(res) else 0.0
+    info={'success':bool(sol.success) and _res_max<=CONVERGED_RESIDUAL,'scipy_success':bool(sol.success),'cost':float(sol.cost),'message':str(sol.message),'max_abs_residual':float(np.max(np.abs(res))) if len(res) else 0.0,
           'equipment':equipment,'nfev':int(sol.nfev),'optimality':float(sol.optimality),'status':int(sol.status),'jacobian_condition':jac_cond,
           'variable_scaling':str(x_scale),'n_unknowns':int(nvar),'well_warnings':shut_notes+well_warnings,'injectors':injector_rows,
           'well_rates':{nid:(float(x[i]) if (float(x[i])>=1e-9 and wset[nid]['open']) else 0.0) for nid,i in widx.items()},'injector_rates':{nid:max(float(x[i]),0.0) for nid,i in iidx.items()},
           'edge_fluids':fluids}
-    info['constraints']=evaluate_constraints(nodes,links,pressures,flows,details); info['violations']=sum(r['Status']=='VIOLATED' for r in info['constraints'])
+    info['constraints']=evaluate_constraints(nodes,links,pressures,flows,details,info); info['violations']=sum(r['Status']=='VIOLATED' for r in info['constraints'])
     return pressures,flows,info,details

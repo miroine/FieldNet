@@ -1,7 +1,7 @@
 from copy import deepcopy
 import numpy as np
 from scipy.optimize import differential_evolution
-from solver.steady_state import solve_network
+from solver.steady_state import solve_network_robust as solve_network
 
 def total_well_rate(details): return sum(v.get('liquid_rate_m3d',0.0) for v in details.values())
 

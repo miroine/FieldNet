@@ -61,6 +61,18 @@ def normalize_graph(nodes, edges):
         try: n['x'] = float(n.get('x') or 0.0); n['y'] = float(n.get('y') or 0.0)
         except (TypeError, ValueError): n['x'] = n['y'] = 0.0
         out_nodes.append(n)
+    # Tank <-> tank communication links live in the source tank's params['communication']; drop dangling/self/duplicate ones.
+    tank_ids = {n['id'] for n in out_nodes if n.get('kind') == 'reservoir'}; cpairs = set()
+    for n in out_nodes:
+        if n.get('kind') != 'reservoir' or not isinstance((n['params']).get('communication'), list): continue
+        keep = []
+        for c in n['params']['communication']:
+            o = c.get('to') if isinstance(c, dict) else None; key = tuple(sorted((n['id'], str(o))))
+            if o not in tank_ids or o == n['id'] or key in cpairs:
+                issues.append(f"Dropped invalid tank communication {n['id']}->{o}"); continue
+            cpairs.add(key); keep.append(c)
+        if keep: n['params']['communication'] = keep
+        else: n['params'].pop('communication', None)
     out_edges = []; pairs = set(); eids = set(); kind = {n['id']: n.get('kind') for n in out_nodes}
     for e in edges:
         s, t = e.get('source'), e.get('target')
@@ -84,11 +96,66 @@ def normalize_graph(nodes, edges):
     return out_nodes, out_edges, issues
 
 
+# Values the property panel *displays* for a missing parameter. Opening a component in the panel writes
+# these back into the model; that is not an engineering change, so it must not invalidate a solve.
+# (tests/test_graph_contract_hash.py checks the solver-relevant ones against the physics defaults.)
+HASH_DEFAULTS = {
+    'well': {'reservoir_pressure_bar': 200.0, 'ipr_model': 'PI', 'pi_m3d_bar': 10.0, 'qmax_m3d': 1500.0, 'gas_c_sm3d_bar2n': 50.0, 'gas_n': 1.0,
+             'depth_m': 2000.0, 'tubing_id_m': 0.0762, 'water_cut': 0.2, 'gor_sm3sm3': 100.0, 'temperature_c': 70.0, 'skin': 0.0,
+             'vlp_model': 'Beggs-Brill', 'correlation': 'Beggs-Brill', 'lift_type': 'none', 'lift_assist_bar': 0.0, 'available': True,
+             'esp_rated_rate_m3d': 1000.0, 'esp_shutoff_head_bar': 80.0, 'esp_speed_fraction': 1.0},
+    'injector': {'injectivity_m3d_bar': 10.0, 'reservoir_pressure_bar': 200.0, 'depth_m': 2000.0, 'available': True},
+    'reservoir': {'fluid_phase': 'oil', 'reservoir_pressure_bar': 250.0, 'temperature_c': 90.0, 'boi_rm3_sm3': 1.25, 'rsi_sm3_sm3': 100.0,
+                  'bubble_point_bar': 150.0, 'ct_1bar': 1.5e-4, 'swi': 0.2, 'min_pressure_bar': 20.0, 'aquifer_pi_m3d_bar': 0.0,
+                  'water_breakthrough_rf': 0.05, 'rf_at_max_water_cut': 0.40, 'max_water_cut': 0.9, 'gor_rise_factor': 3.0},
+    'edge': {**EDGE_PARAM_DEFAULTS, 'ambient_temperature_c': 4.0, 'overall_u_w_m2k': 5.0, 'wax_appearance_temperature_c': 25.0, 'erosion_c_factor': 100.0},
+}
+_HASH_KIND = {'well': 'well', 'water_injector': 'injector', 'gas_injector': 'injector', 'injector': 'injector', 'reservoir': 'reservoir'}
+
+
+def _canon(x):
+    """Canonical JSON-able form: floats rounded to 9 significant digits (unit round-trips add ~1e-16 noise)."""
+    if isinstance(x, bool) or x is None or isinstance(x, (str, int)): return x
+    if isinstance(x, float): return float(f'{x:.9g}') if x == x and abs(x) != float('inf') else str(x)
+    if isinstance(x, dict): return {str(k): _canon(v) for k, v in sorted(x.items(), key=lambda kv: str(kv[0]))}
+    if isinstance(x, (list, tuple)): return [_canon(v) for v in x]
+    return x
+
+
+def _same(a, b):
+    if isinstance(a, (bool, str)) or isinstance(b, (bool, str)) or a is None or b is None: return a == b
+    try: return abs(float(a) - float(b)) <= 1e-9 * max(1.0, abs(float(b)))
+    except (TypeError, ValueError): return a == b
+
+
+def _drop_defaults(params, defaults):
+    return {k: v for k, v in (params or {}).items() if not (k in defaults and _same(v, defaults[k]))}
+
+
 def graph_hash(nodes, edges):
-    """Fingerprint of everything the solver sees (layout/name edits do not invalidate results)."""
-    body = {'nodes': [{k: v for k, v in n.items() if k not in _LAYOUT_KEYS} for n in sorted(nodes, key=lambda z: str(z.get('id')))],
-            'edges': sorted(edges, key=lambda z: str(z.get('id')))}
-    return hashlib.sha256(json.dumps(to_builtin(body), sort_keys=True, default=str).encode()).hexdigest()[:16]
+    """Fingerprint of everything the solver sees. Layout/name edits, float noise from unit conversion and
+    panel-injected default values do not invalidate results (moving or merely selecting an object must not)."""
+    nn = []
+    for n in sorted(nodes, key=lambda z: str(z.get('id'))):
+        d = {k: v for k, v in n.items() if k not in _LAYOUT_KEYS}
+        d['params'] = _drop_defaults(n.get('params'), HASH_DEFAULTS.get(_HASH_KIND.get(n.get('kind')), {}))
+        nn.append(d)
+    ee = []
+    for e in sorted(edges, key=lambda z: str(z.get('id'))):
+        d = dict(e); d['params'] = _drop_defaults(e.get('params'), HASH_DEFAULTS['edge']); ee.append(d)
+    body = _canon(to_builtin({'nodes': nn, 'edges': ee}))
+    return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def set_edge_kind(e, kind):
+    """Change a connection's type consistently: non-pipelines carry no length, a pipeline regains one."""
+    if kind not in LINK_TYPES or e.get('kind') == kind: return e
+    e['kind'] = kind
+    if kind == 'pipeline':
+        if float(e.get('length_m') or 0.0) <= 0.0: e['length_m'] = EDGE_DEFAULTS['length_m']
+    else: e['length_m'] = 0.0
+    for k, v in EDGE_PARAM_DEFAULTS.items(): e.setdefault('params', {}).setdefault(k, v)
+    return e
 
 
 def structure_changed(a_nodes, a_edges, b_nodes, b_edges):
@@ -148,9 +215,27 @@ def run_solve(state, solver, **kwargs):
     nodes, edges = solver_input(state.get('nodes', []), state.get('edges', []))
     try:
         p, q, info, d = solver(nodes, edges, **kwargs)
+        # A warm start from an earlier operating point can trap the solver; if it did not converge, retry from scratch and keep the better result.
+        if kwargs.get('warm_start') and not (bool(p) and info.get('quality_gate') == 'PASS'):
+            kw2 = dict(kwargs); kw2['warm_start'] = None
+            try:
+                r2 = solver(nodes, edges, **kw2)
+                if bool(r2[0]) and (r2[2].get('quality_gate') == 'PASS' or float(r2[2].get('max_abs_residual', 1e9)) < float(info.get('max_abs_residual', 1e9))): p, q, info, d = r2
+            except Exception: pass
     except Exception as exc:  # never leave the UI stuck in SOLVING
+        state.pop('v21_warm_start', None)
         state['solve'] = {'hash': h, 'status': FAILED, 'message': f'Solver error: {exc}', 'results': None}
         return state['solve']
+    ok = bool(p) and info.get('quality_gate') == 'PASS'
+    if ok: msg = f"Converged · {sum(v.get('liquid_rate_m3d', 0.0) for v in d.values()):,.0f} m³/d liquid"
+    else:
+        errs = [x.get('message', '') for x in info.get('debug', []) if x.get('severity') == 'error'] or [info.get('message', 'Solve failed')]
+        msg = ' | '.join(str(m) for m in errs[:3])
+    state['solve'] = {'hash': h, 'status': SOLVED if ok else FAILED, 'message': msg, 'results': (p, q, info, d)}
+    # Only a converged state is a valid starting point. Keeping a failed one made every later solve (after the user fixed the data) start from the bad point.
+    if ok and p: state['v21_warm_start'] = {'pressures': p, 'flows': q, 'well_rates': {k: v['liquid_rate_m3d'] for k, v in d.items()}}
+    else: state.pop('v21_warm_start', None)
+    return state['solve']
     ok = bool(p) and info.get('quality_gate') == 'PASS'
     if ok: msg = f"Converged · {sum(v.get('liquid_rate_m3d', 0.0) for v in d.values()):,.0f} m³/d liquid"
     else:

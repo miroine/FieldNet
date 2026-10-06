@@ -1,122 +1,184 @@
-# FieldNet v31 — Production Network & Prognosis
+# FieldNet v31 — Production Prognosis Tool
 
-v30 is an audit release of v29: corrected well/VLP physics and network kernel, GAP-style well and capacity constraints, canvas/property-panel synchronisation fixes and NaN-safe data editors. See **AUDIT_V30.md** for every finding and fix.
+A Streamlit application for production forecasting, drainage strategy optimization, and field development planning in oil and gas reservoirs. FieldNet combines network flow analysis with reservoir material balance to recommend optimal well counts, predict field performance, and evaluate capacity constraints.
 
-**v31:** reservoir tanks with in-place volume and fluid phase, working production forecast, development schedule, scenarios and well-count study, constraints bulk editor, reorganised app. **v30.2:** merges the v29.1 corrective fixes back in (see AUDIT_V30.md). **v30.1:** new graph editor — drag an OUT port onto an IN port to connect (live line), zoom/pan/Fit/Reset handled inside the editor without Streamlit reruns, a single editor→solver contract (`ui/graph_contract.py`) and explicit UNSOLVED / SOLVING / SOLVED / FAILED model states.
+## Quick Start
 
-# FieldNet v29 — Development Planning
+### Installation
 
-Production-only integrated network/forecast/uncertainty simulator with v19 flow-assurance screening. Economics is intentionally excluded. See `FLOW_ASSURANCE_V19.md` and `UNIT_SYSTEMS.md`.
-
-# FieldNet v17.1 — Uncertainty, Monte Carlo & Development Optimization
-
-## v17.1 audit additions
-- Physical sample bounds with explicit clip/reject policy.
-- Stronger correlation validation (finite values, coefficient range, PSD).
-- Failed-realization diagnostics and survivor-bias warning.
-- P10/P50/P90 convergence diagnostics by realization count.
-- Spearman rank sensitivity ranking for forecast outcomes.
-- Reproducibility metadata retained in Monte Carlo JSON exports.
-- Current release identity propagated across audit and development exports.
-
-
-FieldNet v17 extends the audited v16.1 deterministic field-development workflow with reproducible planning-level uncertainty analysis. It adds seeded Latin-hypercube/random Monte Carlo sampling, optional rank-style Gaussian correlation, explicit parameter overrides, petroleum-style P90/P50/P10 production metrics, realization exports, and bounded development-decision optimization hooks. Deterministic hydraulics and forecast physics remain those of the v16.1 baseline.
-
-**Made by Merouane Hamdani — For non-commercial use — Independent engineering prototype.**
-
-# FieldNet v16.1 — Field Development Audit & Patch Release
-
-**Made by Merouane Hamdani — For non-commercial use — Independent engineering prototype.**
-
-FieldNet v16.1 carries forward the validated professional network solver, advanced physics, and field-development forecasting layers, with an audit/patch focus on schedule integrity, cumulative accounting, scenario isolation, and export/audit consistency.
-
-## v14 highlights
-- Professional solve wrapper retaining the v13 physics residual kernel for compatibility.
-- Residual quality gate and normalized residual score.
-- Pressure/rate scaling metadata and continuation history.
-- Hard/soft constraint classification, priority and penalty utilities.
-- Active/near-active constraint reporting.
-- +capacity debottleneck screening to estimate incremental production response.
-- Multi-scenario runner for case comparisons.
-- Calculation audit JSON: solver/model identity, convergence, residuals, constraints and warnings.
-- Existing v13 advanced wells, artificial lift, performance maps, themes, forecasting and network editor retained.
-
-## Engineering status
-FieldNet remains an independent engineering prototype. Beggs–Brill/PVT/reservoir/equipment implementations include screening-level elements and must be independently validated for the intended operating envelope before operational decisions.
-
-## Run
 ```bash
+# Clone the repository
+git clone <repository-url>
+cd fieldnet
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Run the app locally
 streamlit run app.py
 ```
 
-## Tests
-```bash
-pytest -q
+### First Steps
+
+1. **Load or build a network** using the interactive canvas editor
+2. **Define reservoir tanks** with fluid phase and in-place volumes
+3. **Assign wells to tanks** by dragging tanks onto wells
+4. **Solve the network** to establish current production state
+5. **Run a forecast** to predict field performance over time
+6. **Plan development** with drilling schedules and well addition timing
+7. **Optimize well count** using the scenario comparison tool
+
+## Key Features
+
+### Network Modeling
+- **Interactive canvas editor** with drag-to-connect workflows
+- **Component palette**: wells, injectors, separators, pipelines, chokes, pumps, compressors, reservoir tanks
+- **Real-time graph validation** with explicit solve status (UNSOLVED / SOLVING / SOLVED / FAILED)
+- **Full topology support**: looped networks, multi-phase flow, parallel connections
+- **Revision-based state management** prevents Streamlit replay overwrites
+
+### Reservoir Tanks & Depletion
+- **Material balance** for oil, dry gas, and gas condensate
+- **Fluid evolution** with water breakthrough curves and GOR rise below bubble point
+- **Aquifer support** for voidage replacement in water injectors
+- **Tank pressure propagation** into well equations throughout the network
+- **Tank-to-well assignment** via drag-and-drop in the editor (not via pipeline)
+
+### Production Forecasting
+- **Automatic depletion sub-stepping** prevents pressure overshoots over large report steps
+- **KPI tracking**: peak rate, plateau, cumulative, recovery factor, final water cut
+- **Multi-well charting** with liquid rate, gas rate, water cut, GOR per well
+- **Scenario comparison** with overlaid profiles
+- **Warm-start optimization** (dogbox solver) for 7× faster forecasts
+
+### Well Optimization
+- **IPR models**: Vogel (oil), gas backpressure (gas), Fetkovich (water injection)
+- **VLP correlations**: Beggs–Brill (oil wells), Homogeneous (gas wells), customizable
+- **Lift assistance**: gas lift injection, ESP head curves with affinity laws
+- **Rate controls**: maximum liquid rate, minimum flowing pressure, choked rate limits
+- **Stable intersection selection** using GAP-style well conventions
+
+### Development Planning
+- **Gantt-chart scheduling** with drilling order, rig availability, "not before" dates
+- **First-oil timeline** and facility-constrained KPI comparison
+- **Well-count study** using marginal-oil analysis (7 scenarios)
+- **What-if scenarios**: separator capacity, injection on/off, pressure limits
+
+### Network Constraints
+- **Capacity enforcement**: separator liquid, export gas, connection rate limits
+- **Pro-rata choking** upstream wells to respect bottleneck limits
+- **Debottleneck analysis** showing capacity vs. gain trade-offs
+- **Well caps and minimum pressures** editable in one constraints table
+
+## Technical Architecture
+
+FieldNet is organized into modular layers:
+
+- **network/**: Graph topology, tank material balance, solvers
+- **physics/**: PVT black-oil model, IPR correlations, VLP, friction, chokes
+- **solver/**: Steady-state network solver (SciPy), warm-start optimization, convergence
+- **ui/**: Streamlit app layout, canvas editor, interactive charts with Plotly
+- **optimization/**: Scenario comparison, well-count study, development scheduling
+- **tests/**: Unit tests (244 Python tests pass), browser editor tests (25/25 Chromium)
+
+## Latest Changes (v31)
+
+- **Tank-based production forecasts** with automatic depletion sub-stepping
+- **Reservoir pressure** applied to all linked wells in every solver path
+- **7-scenario well-count study** with recommended producer count (marginal-oil rule)
+- **Production prognosis charts**: liquid rate, gas, water cut, GOR, cumulative oil per well
+- **7-workflow app layout** with consistent color-blind-validated palette (oil=aqua, gas=orange, water=blue)
+- **Dogbox least-squares solver** for 5–7× faster forecasts
+- **Realistic demo field** with aquifer, gas lift, capacity limits, water injection
+
+## Documentation
+
+- **[USER_GUIDE.md](USER_GUIDE.md)** — Step-by-step workflows and UI navigation
+- **[API_REFERENCE.md](API_REFERENCE.md)** — Network model, tank properties, solver API
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Module organization, data flow, key algorithms
+- **[EXAMPLES.md](EXAMPLES.md)** — Worked examples and demo field walkthrough
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** — Common issues and solutions
+- **[CHANGELOG.md](CHANGELOG.md)** — Version history and release notes
+
+## Deployment
+
+### Streamlit Cloud
+
+1. Push code to GitHub
+2. Connect repo to Streamlit Cloud
+3. Ensure `requirements.txt` includes all dependencies
+4. Set **one deployment** per commit (stale modules cause import errors if deployed mid-upload)
+
+### Docker
+
+```dockerfile
+FROM python:3.10
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8501
+CMD ["streamlit", "run", "app.py"]
 ```
 
-## v15 advanced physics release
+### Local Development
 
-Adds completion-interval radial productivity, rate-dependent non-Darcy skin, detailed multiphase pressure decomposition/profiles, multi-speed pump/compressor maps, surge/choke/power and pump NPSH envelope diagnostics. Existing v14.1 solver and physics APIs remain available for backward compatibility. The new models are engineering/planning-level and should be calibrated before operational use.
+```bash
+streamlit run app.py --logger.level=debug
+```
 
+The app auto-reloads on file changes. Use the browser's developer console (F12) for frontend errors in the canvas editor.
 
-## v15.1 engineering audit / patch release
+## Known Limitations
 
-- Makes 2-D pump/compressor map out-of-envelope behavior explicit instead of silently presenting clamped values as normal map interpolation.
-- Reports map status, extrapolation reasons, requested speed, evaluated/clamped speed, and separate speed/flow envelope flags.
-- Validates that every speed line contains at least two map points.
-- Adds limiting-case validation for completion skin/non-Darcy behavior, multiphase pressure-component closure, equipment-map boundaries, and audit identity.
-- No new physics claims are introduced; this is a validation and diagnostics release.
+- **PVT model** is a screening black-oil with fixed 150 bar bubble point and 120 Sm³/Sm³ Rsb; replace with tuned PVT for field studies
+- **Gas networks** use liquid-rate formulation (screening only); compressors are ratio-based
+- **Minimum-rate shut-in** is a rule applied after solve, not a mixed-integer decision
+- **Gas-lift injection** is an input, not an allocation variable in optimization
 
+## Requirements
 
-## v16 — Field Development & Integrated Forecasting
+- Python 3.9+
+- Streamlit ≥ 1.0
+- SciPy (sparse/dense matrix solvers)
+- Pandas, NumPy
+- Plotly (charts)
+- React / TypeScript (canvas editor frontend, built to `ui/fieldnet_canvas/build/`)
 
-- Named development scenarios with independent immutable execution.
-- Dated well/facility/network events using the existing project object IDs.
-- Exact final forecast interval clipping and cumulative oil/water/gas accounting.
-- Constraint/convergence KPI summaries and scenario comparison dashboard.
-- Streamlit Field Development tab with timestep CSV and scenario-summary JSON exports.
-- Planning/screening workflow only; not a transient reservoir simulator or reserves certification tool.
+See `requirements.txt` for pinned versions.
 
+## Testing
 
-## v16.1 — Field Development audit / patch release
+```bash
+# Run unit tests
+pytest tests/test_v30_audit.py tests/test_v31_prognosis.py
 
-- Audited exact final-interval clipping and cumulative oil/water/gas accounting.
-- Development schedules now fail fast when an event references an unknown node/edge ID instead of silently ignoring the typo.
-- Calculation-audit and field-development export identities updated consistently to FieldNet v16.1.
-- Added export/accounting/scenario-isolation and event-boundary regression checks.
-- No new reservoir or hydraulic physics claims; this is an audit/validation release.
+# Browser-based editor tests (requires Playwright & Chromium)
+python tests/browser/run_editor_browser_test.py
+```
 
-## v17.2 — Unit systems and conversion hardening
-FieldNet v17.2 adds an explicit engineering-unit boundary with **Norwegian SI** and **Field** profiles while retaining canonical internal calculation units. Norwegian SI uses bar, °C, m/mm, Sm³/d, Sm³, kg/m³ and kW; Field uses psi, °F, ft/in, stb/d, Mscf/d, stb/MMscf, lb/ft³ and hp. Standard-volume reporting is defined at 15 °C and 1.01325 bara. `Sm³` standard volume is not treated as flowing `m³`; stock-tank liquid and standard-gas conversions are independent. PVT pressure is absolute; gauge/absolute conversion helpers are explicit.
+## Contributing
 
-## v20 well performance
-v20 adds enhanced nodal analysis, selectable Beggs-Brill/homogeneous VLP, gas-lift screening/optimization, generic ESP affinity-law performance/envelopes, and well QA. See `WELL_PERFORMANCE_V20.md`. Economics remains excluded.
+1. Create a feature branch
+2. Add tests in `tests/`
+3. Run the full test suite
+4. Submit a PR with description of changes
+5. Ensure one commit per deployment to Streamlit Cloud (avoid stale module imports)
 
+## License
 
-## v24 Reliability & Availability
-See `RELIABILITY_V24.md`. Adds seeded failure/repair Monte Carlo, planned outages, redundancy, availability percentiles and deferred-production screening. No economics.
+[Your license here]
 
-## v25
-Adds communicating reservoir tanks, pressure-dependent aquifer support, injector–tank connectivity, auditable voidage accounting, exact horizon clipping, and a dedicated Reservoir coupling workspace. No economics.
+## Support
 
+For issues, feature requests, or questions:
+- Open an issue on GitHub
+- Check [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common problems
+- Review [EXAMPLES.md](EXAMPLES.md) for usage patterns
+- See [AUDIT_V30.md](AUDIT_V30.md) for detailed v30 findings and fixes
 
-## v26
-Development Planning adds dependency/resource-constrained task scheduling, drilling/workover rig serialization, tieback/commissioning/facility/compression/shutdown/abandonment events, Gantt visualization, and production-forecast consequences. Economics remain excluded. See `DEVELOPMENT_PLANNING_V26.md`.
+---
 
+**Made by Merouane Hamdani — For non-commercial use — Independent engineering prototype.**
 
-## v28 — Engineering QA & Model Assurance
-Adds a read-only consolidated model-quality gate across topology, units/reference conditions, well and pipeline plausibility, solver convergence, physical residual closure, operating constraints and forecast sanity. Results are classified PASS / REVIEW / FAIL and exported as JSON. The checker never silently changes engineering inputs.
-
-
-## v29 Scenario Management
-Immutable content-addressed snapshots, branching/lineage, assumption registers, structural diffs, comparison tables, QA capture, reproducible run manifests, and verified scenario archives. See `SCENARIO_MANAGEMENT_V29.md`.
-
-## v29.1 audit/corrective release
-- Rejects NaN/Inf at interchange and Model Assurance boundaries.
-- Rejects non-finite forecast/solved values in QA.
-- Fixes pipeline roughness calibration to update the solver-consumed field.
-- Clips reliability studies to the exact requested horizon, including the final partial interval.
-- Limits stiff inter-tank communication to conservative pressure equalization / donor storage.
-- Verifies run-manifest hashes and snapshot references on scenario archive import/export.
-- Aligns current release/provenance metadata to FieldNet v29.1.
+FieldNet remains a screening-level planning tool. Beggs–Brill/PVT/reservoir/equipment implementations must be independently validated for the intended operating envelope before operational decisions.

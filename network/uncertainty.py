@@ -4,7 +4,7 @@ Planning-level uncertainty orchestration around deterministic field-development 
 Sampling never changes hydraulic equations; every realization is explicit and reproducible.
 """
 from __future__ import annotations
-import copy, math
+import copy, math, os, pickle, time
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable, Iterable
 import numpy as np
@@ -100,6 +100,19 @@ def _find_target(nodes, edges, target_id):
         if str(obj.get("id"))==str(target_id): return obj
     raise ValueError(f"Unknown uncertainty target_id: {target_id}")
 
+def _find_targets(nodes, edges, target_id):
+    """``'kind:well'`` / ``'kind:reservoir'`` / ``'edges'`` select a whole group (one shared sample for all members); otherwise one element."""
+    t = str(target_id)
+    if t.startswith("kind:"):
+        k = t.split(":", 1)[1]; objs = [o for o in nodes if o.get("kind") == k]
+        if not objs: raise ValueError(f"No nodes of kind {k!r} for the uncertainty target")
+        return objs
+    if t == "edges:pipeline":
+        objs = [e for e in edges if e.get("kind", "pipeline") == "pipeline"]
+        if not objs: raise ValueError("No pipelines for the uncertainty target")
+        return objs
+    return [_find_target(nodes, edges, target_id)]
+
 def _get_nested(obj: dict, path: str):
     cur=obj
     for part in path.split("."): cur=cur[part]
@@ -127,12 +140,14 @@ def apply_sample(nodes, edges, scenario: DevelopmentScenario, parameters: Iterab
             attr=p.path.split(".",1)[1]
             if not hasattr(ss,attr): raise ValueError(f"{p.name}: unknown scenario attribute {attr}")
             base=getattr(ss,attr); final=_bounded_value(p, float(base)*val if p.operation=="multiply" else val); setattr(ss,attr,final); continue
-        target=_find_target(nn,ee,p.target_id)
-        if target is None: raise ValueError(f"{p.name}: target_id required for path {p.path}")
-        try: base=_get_nested(target,p.path)
-        except (KeyError,TypeError) as exc: raise ValueError(f"{p.name}: unknown parameter path {p.path}") from exc
-        final=_bounded_value(p, float(base)*val if p.operation=="multiply" else val)
-        _set_nested(target,p.path,final)
+        if p.target_id is None: raise ValueError(f"{p.name}: target_id required for path {p.path}")
+        for target in _find_targets(nn,ee,p.target_id):
+            try: base=_get_nested(target,p.path)
+            except (KeyError,TypeError) as exc:
+                if str(p.target_id).startswith(("kind:","edges:")): continue   # group member without this parameter
+                raise ValueError(f"{p.name}: unknown parameter path {p.path}") from exc
+            final=_bounded_value(p, float(base)*val if p.operation=="multiply" else val)
+            _set_nested(target,p.path,final)
     return nn,ee,ss
 
 def percentile_summary(values: Iterable[float]) -> dict[str,float]:
@@ -175,21 +190,139 @@ def failure_diagnostics(runs: list[dict], parameters: Iterable[UncertainParamete
     frac=len(failed)/total if total else 0.0
     return {"failure_fraction":frac,"failure_causes":errors,"parameter_selection_shift":shifts,"survivor_bias_warning":bool(frac>=0.05 or any(abs(x["mean_shift_sigma"])>=0.25 for x in shifts))}
 
-def run_monte_carlo(nodes, edges, scenario: DevelopmentScenario, config: MonteCarloConfig, forecast_runner=None, progress: Callable[[int,int],None]|None=None):
-    config.validate(); samples=sample_parameters(config); runs=[]
-    for i,sample in enumerate(samples):
+KPI_KEYS=["cumulative_oil_m3","cumulative_liquid_m3","final_oil_m3d","final_liquid_m3d","convergence_fraction","constraint_events"]
+MAX_SERIES_BYTES=256*1024*1024  # cap on retained per-realization time series (float32 arrays)
+
+def default_workers() -> int:
+    """min(cpu_count-1, 8), at least 1."""
+    return max(1,min((os.cpu_count() or 1)-1,8))
+
+def _run_one(i,sample,ctx):
+    """One realization -> (row, compact series or None). Never raises."""
+    series=None
+    try:
+        nn,ee,ss=apply_sample(ctx["nodes"],ctx["edges"],ctx["scenario"],ctx["parameters"],sample)
+        kwargs={} if ctx["forecast_runner"] is None else {"forecast_runner":ctx["forecast_runner"]}
+        r=run_development_scenario(nn,ee,ss,**kwargs); k=r["kpis"]
+        row={"sample":i,"success":True,**sample,**{k0:k[k0] for k0 in KPI_KEYS}}
+        if ctx["keep_series"]:
+            from network.risk_profiles import extract_run_series
+            try: series=extract_run_series(r,ctx["series_variables"],node_kinds=ctx["node_kinds"],dtype=np.float32)
+            except Exception: series=None
+    except Exception as exc: row={"sample":i,"success":False,**sample,"error":str(exc)}
+    return row,series
+
+_WORKER_CTX: dict|None=None
+def _init_worker(ctx):
+    global _WORKER_CTX
+    _WORKER_CTX=ctx
+
+def _mc_task(chunk,ctx=None):
+    """Top-level (picklable) worker: chunk=[(index,sample),...] -> [(index,row,series),...]."""
+    c=ctx if ctx is not None else _WORKER_CTX
+    out=[]
+    for i,sample in chunk:
+        row,series=_run_one(i,sample,c); out.append((i,row,series))
+    return out
+
+def _mp_context():
+    import multiprocessing as mp
+    try: return mp.get_context("fork"),"fork"
+    except ValueError: return mp.get_context("spawn"),"spawn"
+
+def parallel_map(fn,items,workers=1):
+    """Ordered map; process pool when workers>1 (fork if available), serial fallback if the pool cannot start
+    or ``fn``/items are not picklable. ``fn`` must be a top-level function."""
+    items=list(items); workers=min(max(1,int(workers or 1)),len(items) or 1)
+    if workers>1:
         try:
-            nn,ee,ss=apply_sample(nodes,edges,scenario,config.parameters,sample)
-            kwargs={} if forecast_runner is None else {"forecast_runner":forecast_runner}
-            r=run_development_scenario(nn,ee,ss,**kwargs); k=r["kpis"]
-            row={"sample":i,"success":True,**sample,**{k0:k[k0] for k0 in ["cumulative_oil_m3","cumulative_liquid_m3","final_oil_m3d","final_liquid_m3d","convergence_fraction","constraint_events"]}}
-        except Exception as exc: row={"sample":i,"success":False,**sample,"error":str(exc)}
-        runs.append(row)
-        if progress: progress(i+1,len(samples))
+            ctxmp,_=_mp_context()
+            from concurrent.futures import ProcessPoolExecutor
+            with ProcessPoolExecutor(max_workers=workers,mp_context=ctxmp) as ex: return list(ex.map(fn,items,chunksize=max(1,len(items)//(workers*4))))
+        except Exception: pass
+    return [fn(x) for x in items]
+
+def _series_bytes(s) -> int:
+    return sum(a.nbytes for a in s["vars"].values()) if s else 0
+
+def run_monte_carlo(nodes, edges, scenario: DevelopmentScenario, config: MonteCarloConfig, forecast_runner=None, progress: Callable[[int,int],None]|None=None, *, workers: int=1, keep_series: bool=False, series_variables: Iterable[str]|None=None, executor=None):
+    """Monte-Carlo wrapper. ``workers>1`` (or a user ``executor``) evaluates realizations in parallel;
+    rows are ordered by sample index so results are identical to the serial run for the same seed.
+    ``keep_series=True`` retains per-realization system time series (float32, capped at
+    MAX_SERIES_BYTES) and adds 'profiles' (JSON records; rebuild with
+    network.risk_profiles.profiles_from_records) and 'series_meta'."""
+    config.validate(); samples=sample_parameters(config); n=len(samples); t0=time.time()
+    node_kinds={str(x.get("id")):str(x.get("kind")) for x in nodes if x.get("id") is not None and x.get("kind")}
+    ctx={"nodes":nodes,"edges":edges,"scenario":scenario,"parameters":list(config.parameters),"forecast_runner":forecast_runner,"keep_series":bool(keep_series),"series_variables":None if series_variables is None else list(series_variables),"node_kinds":node_kinds}
+    notes=[]; workers=max(1,int(workers or 1)); method="serial"; used=1
+    results={}  # index -> (row, series)
+    done=[0]
+    def tick(k):
+        done[0]+=k
+        if progress: progress(done[0],n)
+    def serial(idx):
+        for i in idx:
+            row,series=_run_one(i,samples[i],ctx); results[i]=(row,series); tick(1)
+    parallel=(workers>1 or executor is not None) and n>1
+    ex=None; own=False; start=None
+    if parallel:
+        ctxmp,start=_mp_context() if executor is None else (None,"external")
+        if executor is None and start=="spawn":
+            try: pickle.dumps(ctx)
+            except Exception as exc:
+                parallel=False; notes.append(f"parallel disabled: inputs/forecast_runner not picklable for spawn start method ({exc.__class__.__name__}); ran serially")
+        if parallel and executor is None:
+            try:
+                from concurrent.futures import ProcessPoolExecutor
+                nw=min(workers,n)
+                ex=ProcessPoolExecutor(max_workers=nw,mp_context=ctxmp,initializer=_init_worker,initargs=(ctx,)); own=True; used=nw
+            except Exception as exc:
+                parallel=False; notes.append(f"parallel disabled: could not start process pool ({exc.__class__.__name__}: {exc}); ran serially")
+        elif parallel: ex=executor; used=int(getattr(executor,"_max_workers",workers) or workers)
+    if parallel and ex is not None:
+        method=start
+        from concurrent.futures import as_completed
+        size=max(1,math.ceil(n/(max(used,1)*4)))
+        chunks=[list(range(a,min(a+size,n))) for a in range(0,n,size)]
+        try:
+            futs={}
+            for idx in chunks:
+                payload=[(i,samples[i]) for i in idx]
+                f=ex.submit(_mc_task,payload) if own else ex.submit(_mc_task,payload,ctx)
+                futs[f]=idx
+            for f in as_completed(futs):
+                idx=futs[f]
+                try:
+                    for i,row,series in f.result(): results[i]=(row,series)
+                    tick(len(idx))
+                except Exception as exc:
+                    notes.append(f"worker chunk failed ({exc.__class__.__name__}: {exc}); re-ran {len(idx)} samples serially"); serial(idx)
+        finally:
+            if own: ex.shutdown(wait=True,cancel_futures=True)
+    else:
+        serial(range(n))
+    runs=[results[i][0] for i in range(n)]
+    kept=[]; used_bytes=0; dropped=0
+    if keep_series:
+        for i in range(n):
+            s=results[i][1]
+            if s is None: continue
+            b=_series_bytes(s)
+            if used_bytes+b>MAX_SERIES_BYTES: dropped+=1; continue
+            used_bytes+=b; kept.append(s)
+        if dropped: notes.append(f"series memory cap {MAX_SERIES_BYTES//2**20} MB reached: {dropped} realization series not retained in profiles (KPI statistics use all runs)")
     good=[r for r in runs if r.get("success")]
     metric_names=["cumulative_oil_m3","cumulative_liquid_m3","final_oil_m3d","final_liquid_m3d"]
     metrics={m:percentile_summary(r[m] for r in good) for m in metric_names} if good else {}
     convergence={m:percentile_convergence(runs,m) for m in metric_names} if good else {}
     sensitivity={m:sensitivity_summary(runs,config.parameters,m) for m in metric_names} if good else {}
     failures=failure_diagnostics(runs,config.parameters)
-    return {"application":APPLICATION,"seed":config.seed,"method":config.method,"requested_samples":config.samples,"successful_samples":len(good),"failed_samples":len(runs)-len(good),"success_fraction":len(good)/len(runs) if runs else 0.0,"parameters":[asdict(p) for p in config.parameters],"correlation":config.correlation,"runs":runs,"metrics":metrics,"percentile_convergence":convergence,"sensitivity":sensitivity,"failure_diagnostics":failures}
+    out={"application":APPLICATION,"seed":config.seed,"method":config.method,"requested_samples":config.samples,"successful_samples":len(good),"failed_samples":len(runs)-len(good),"success_fraction":len(good)/len(runs) if runs else 0.0,"parameters":[asdict(p) for p in config.parameters],"correlation":config.correlation,"runs":runs,"metrics":metrics,"percentile_convergence":convergence,"sensitivity":sensitivity,"failure_diagnostics":failures,
+         "compute":{"workers_requested":workers,"workers_used":used if method not in ("serial",) else 1,"start_method":method,"elapsed_s":time.time()-t0,"notes":notes}}
+    if keep_series:
+        from network.risk_profiles import collect_series, percentile_profiles, profiles_to_records
+        ss=collect_series(kept,series_variables,node_kinds=node_kinds)
+        prof=percentile_profiles(ss)
+        out["profiles"]=profiles_to_records(prof)
+        out["series_meta"]={"stored":True,"realizations_used":ss["n_runs"],"realizations_dropped_for_memory":dropped,"variables":list(ss["variables"]),"series_bytes":used_bytes,"memory_cap_bytes":MAX_SERIES_BYTES,"dtype":"float32","convention":"P90 = low case (10th percentile); P10 = high case (90th percentile); P50 = median; cumulatives computed per realization before percentiling","notes":ss["notes"]+[x for x in notes if "memory" in x]}
+    return out

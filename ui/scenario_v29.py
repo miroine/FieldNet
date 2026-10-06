@@ -5,7 +5,7 @@ from network.scenario_v29 import create_snapshot, branch_snapshot, scenario_diff
 from solver.model_assurance_v28 import model_quality_report
 
 def render_scenario_v29(st,nodes,edges,unit_profile='norwegian_si'):
-    st.subheader('v29 Scenario Management & Reproducibility')
+    st.subheader('Scenario Management & Reproducibility')
     st.caption('Immutable content-addressed snapshots. Branches copy engineering cases; scenario bookkeeping never mutates solver inputs.')
     ss=st.session_state.setdefault('v29_snapshots',[])
     name=st.text_input('Snapshot / scenario name',value=f'Scenario {len(ss)+1}',key='v29_name')
@@ -27,8 +27,8 @@ def render_scenario_v29(st,nodes,edges,unit_profile='norwegian_si'):
             da=ss[labels.index(a)]; db=ss[labels.index(b)]; d=scenario_diff(da,db)
             st.metric('Structured changes',d['change_count']); st.dataframe(pd.DataFrame(d['changes']),hide_index=True,use_container_width=True)
         archive=export_scenario_archive(ss)
-        st.download_button('Download v29 scenario archive',archive,'fieldnet_v29_scenarios.zip','application/zip',use_container_width=True)
-    up=st.file_uploader('Import v29 scenario archive',type=['zip'],key='v29_upload')
+        st.download_button('Download scenario archive',archive,'fieldnet_scenarios.zip','application/zip',use_container_width=True)
+    up=st.file_uploader('Import scenario archive',type=['zip'],key='v29_upload')
     if up and st.button('Validate/import scenario archive',use_container_width=True):
         try:
             got=import_scenario_archive(up.getvalue()); st.session_state.v29_snapshots=got['snapshots']; st.success(f"Verified and imported {len(got['snapshots'])} snapshots")

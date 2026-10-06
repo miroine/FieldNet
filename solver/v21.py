@@ -7,7 +7,7 @@ choke-back, as GAP does for separator/pipeline limits) and explainable diagnosti
 from copy import deepcopy
 from collections import defaultdict, deque
 import math
-from solver.steady_state import solve_network
+from solver.steady_state import solve_network, solve_network_robust, apply_fluid_follow
 from solver.physical_audit import reconstruct_physical_residuals
 from solver.constraints import active_constraints
 from solver.equations import fixed_pressure, boundary_issues, links_of
@@ -119,6 +119,9 @@ def _upstream_wells(nodes, edges, node_id=None, edge_id=None):
             if y not in seen: seen.add(y); dq.append(y)
     return wells
 
+from solver.constraints import ENFORCEABLE
+
+
 def enforce_capacity_constraints(nodes, edges, solve, *, max_iterations=8, initial_guess=None):
     """Honour facility/connection rate limits by pro-rata choking of upstream wells.
 
@@ -129,31 +132,35 @@ def enforce_capacity_constraints(nodes, edges, solve, *, max_iterations=8, initi
     ns=deepcopy(nodes); byid={n['id']:n for n in ns}; actions=[]; guess=initial_guess
     result=solve(ns,edges,guess)
     for _ in range(max_iterations):
-        p,q,info,d=result; worst=[]
-        for c in info.get('constraints',[]):
-            if c.get('Status')!='VIOLATED' or c.get('Constraint') not in ('Liquid capacity','Maximum rate'): continue
-            worst.append(c)
+        p,q,info,d=result
+        worst=[c for c in info.get('constraints',[]) if c.get('Status')=='VIOLATED' and c.get('Constraint') in ENFORCEABLE]
         if not worst: break
-        changed=False
+        changed=False; node_ids={n['id'] for n in ns}
         for c in worst:
-            # Map the constraint row back to its component.
+            # Map the constraint row back to its component (a node capacity or a connection limit).
             comp=c['Component']; cid=c.get('ComponentId')
-            node=next((n for n in ns if c['Constraint']=='Liquid capacity' and (n['id']==cid or (cid is None and n.get('name')==comp))),None)
+            node=next((n for n in ns if n['id']==cid and n.get('kind')!='well'),None) if cid in node_ids else None
             edge=None if node else next((e for e in edges if e['id']==cid or (cid is None and e.get('name',e['id'])==comp)),None)
             wells=_upstream_wells(ns,edges,node_id=node['id'] if node else None,edge_id=edge['id'] if edge else None)
             if not wells: continue
             f=max(min(float(c['Limit'])/max(float(c['Value']),1e-9),1.0),0.0)*0.999
+            # Only wells that actually contribute to the limited quantity are choked (a water limit leaves dry wells alone).
+            key={'Oil capacity':'oil_rate_m3d','Maximum oil rate':'oil_rate_m3d','Water capacity':'water_rate_m3d','Maximum water rate':'water_rate_m3d','Gas capacity':'gas_rate_sm3d','Maximum gas rate':'gas_rate_sm3d'}.get(c['Constraint'])
             for wid in wells:
                 qw=float(d.get(wid,{}).get('liquid_rate_m3d',0.0))
-                if qw<=1e-6: continue
+                if qw<=1e-6 or (key and float(d.get(wid,{}).get(key,0.0))<=1e-9): continue
                 prm=byid[wid].setdefault('params',{}); old=prm.get('_network_cap_m3d')
                 new=qw*f if old is None else min(float(old),qw*f)
+                if old is not None and new>=float(old)*(1-1e-6): continue     # no tighter than the cap already applied: nothing new to enforce
                 prm['_network_cap_m3d']=new; changed=True
                 actions.append({'well':byid[wid].get('name',wid),'well_id':wid,'constraint':f"{comp} {c['Constraint']}",'cap_m3d':new,
                                 'message':f"{byid[wid].get('name',wid)} choked to {new:.1f} m3/d to honour {comp} {c['Constraint'].lower()} ({c['Limit']:.0f})."})
         if not changed: break
         guess={'pressures':p,'flows':q,'well_rates':{k:v['liquid_rate_m3d'] for k,v in d.items()}}
         result=solve(ns,edges,guess)
+        if float(result[2].get('max_abs_residual',0.0))>1e-4:
+            result[2]['message']=(str(result[2].get('message',''))+' | Capacity enforcement stopped: the choked network does not converge (limit far below the wells\' natural rate - check separator/compressor limits and line sizes).').strip(' |')
+            break
     return result, ns, actions
 
 def split_isolated(nodes, edges):
@@ -169,6 +176,10 @@ def solve_v21(nodes, edges, *, warm_start=None, attempts=3, residual_tolerance=1
     """Robust solve with warm starts, variable scaling, retry orchestration and optional
     enforcement of facility capacity limits."""
     from network.reservoir_mb import ensure_tank_links
+    from network.equipment import has_inline, expand_inline_equipment, expand_guess, collapse_results
+    if has_inline(nodes):  # inline equipment nodes -> inlet/outlet junctions + link, folded back after the solve
+        ns_, es_, mp_ = expand_inline_equipment(nodes, edges)
+        return collapse_results(solve_v21(ns_, es_, warm_start=expand_guess(warm_start, mp_), attempts=attempts, residual_tolerance=residual_tolerance, enforce_constraints=enforce_constraints), mp_)
     nodes=ensure_tank_links(nodes); all_nodes=nodes
     nodes,isolated=split_isolated(nodes,edges)
     iso_rows=[{'severity':'warning','code':'NOT_CONNECTED','component':n.get('id'),'message':f"{n.get('name',n.get('id'))} has no connections and was excluded from the solve."} for n in isolated if n.get('kind')!='reservoir']  # tanks feed wells by assignment, not by pipes
@@ -181,10 +192,10 @@ def solve_v21(nodes, edges, *, warm_start=None, attempts=3, residual_tolerance=1
     def _run(ns, es, guess):
         hist=[]; best=None; g=_clean_guess(ns,es,guess)
         for k in range(max(1,int(attempts))):
-            try: p,q,info,d=solve_network(ns,es,x_scale='jac',max_nfev=3000+1000*k,initial_guess=g)
+            try: p,q,info,d=solve_network_robust(ns,es,x_scale='jac',max_nfev=3000+1000*k,initial_guess=g)
             except ValueError as exc:
                 return ({},{},{'success':False,'message':str(exc),'max_abs_residual':float('inf'),'constraints':[],'violations':0},{}),None,hist
-            audit=reconstruct_physical_residuals(ns,es,p,q,info.get('injector_rates'))
+            audit=reconstruct_physical_residuals(ns,apply_fluid_follow(es,info),p,q,info.get('injector_rates'))
             score=max(audit['max_pressure_residual_bar']/10.0,audit['max_mass_residual_m3d']/1000.0)
             hist.append({'attempt':k+1,'success':bool(info.get('success')),'scaled_physical_residual':float(score),'nfev':info.get('nfev'),'jacobian_condition':info.get('jacobian_condition')})
             if best is None or score<best[0]: best=(score,p,q,info,d,audit)
