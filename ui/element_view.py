@@ -87,5 +87,5 @@ def render_element_results(st, nodes, edges, results, forecast=None):
     if vars_:
         st.markdown('**Over time (forecast)**')
         v = st.selectbox('Variable', vars_, key='elem_var'); ts = element_series(forecast, sel, v)
-        if not ts.empty: st.plotly_chart(charts.style(px.line(ts, x='Date', y=v, title=f'{labels[sel]} — {v}'), y=v, legend=False), use_container_width=True)
+        if not ts.empty: st.plotly_chart(charts.style(px.line(ts, x='Date', y=v, title=f'{labels[sel]} — {v}', color_discrete_sequence=[charts.series_color(v)]), y=v, legend=False), use_container_width=True)
     elif forecast: st.caption('Run a forecast to see this element over time.')

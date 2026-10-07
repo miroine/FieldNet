@@ -78,6 +78,7 @@ from ui.scenario_v29 import render_scenario_v29
 from ui.cases_view import render_cases, library
 from ui.templates_view import render_templates, load_template
 from ui.availability_view import render_availability
+from ui.batch_view import render_data_tables
 from network.templates import TEMPLATES
 from ui.pvt_view import render_pvt
 from ui.hub_access import current_hub, table_actions
@@ -306,6 +307,9 @@ with tab_net:
         if sid:
             n=next(x for x in st.session_state.nodes if x['id']==sid); n['name']=synced_text(st,'Name',n['name'],'nm'+sid)
             p=n.setdefault('params',{})
+            _sc=synced_slider(st,'Symbol size on the layout (× normal; also canvas Size −/+)',0.4,3.0,float(clean_num(p.get('scale'),1.0)),'scl'+sid)
+            if abs(float(_sc)-1.0)<0.02: p.pop('scale',None)
+            else: p['scale']=round(float(_sc),2)
             if n['kind'] in ('well','water_injector','gas_injector','injector'):
                 if role_phase_editor(st,n): st.rerun()
             if n['kind']=='joint':
@@ -380,6 +384,12 @@ with tab_net:
                 else: p['qmax_m3d']=unit_input(f"Vogel qmax [{ul['liquid_rate']}]",float(clean_num(p.get('qmax_m3d'),1500)),liquid_rate_to_display,liquid_rate_from_display,'qm'+sid,0.1,1e7)
                 p['depth_m']=unit_input(f"TVD [{ul['length']}]",float(clean_num(p.get('depth_m'),2000)),length_to_display,length_from_display,'de'+sid,1.,10000.); p['tubing_id_m']=unit_input(f"Tubing ID [{ul['diameter']}]",float(clean_num(p.get('tubing_id_m'),.0762)),diameter_to_display,diameter_from_display,'ti'+sid,0.01,1.,fmt='%.4f')
                 p['water_cut']=synced_slider(st,'Water cut',0.,0.99,float(clean_num(p.get('water_cut'),.2)),'wc'+sid); p['gor_sm3sm3']=unit_input(f"Producing GOR [{ul['gor']}]",float(clean_num(p.get('gor_sm3sm3'),100)),gor_to_display,gor_from_display,'go'+sid,0.,5000.); p['temperature_c']=unit_input(f"Tubing temperature [{ul['temperature']}]",float(clean_num(p.get('temperature_c'),70)),temperature_to_display,temperature_from_display,'te'+sid,-10.,250.)
+                with st.expander('Minimum stable rate per phase (below it the well is shut in)',expanded=any(p.get(k) for k in ('min_oil_rate_m3d','min_water_rate_m3d','min_gas_rate_sm3d'))):
+                    st.caption('0 = no minimum. A phase minimum is converted to an equivalent liquid rate at the current water cut and GOR; the well shuts in when it cannot hold the highest of them (liquid loading, facility turn-down).')
+                    for _k,_lab,_mx in (('min_oil_rate_m3d','Minimum oil rate [Sm³/d]',1e6),('min_water_rate_m3d','Minimum water rate [m³/d]',1e6),('min_gas_rate_sm3d','Minimum gas rate [Sm³/d]',1e9)):
+                        _v=synced_number(st,_lab,float(clean_num(p.get(_k),0.0)),'mnr'+_k+sid,0.0,_mx)
+                        if _v>0: p[_k]=_v
+                        else: p.pop(_k,None)
                 p['skin']=synced_number(st,'Completion skin [-]',float(clean_num(p.get('skin'),0.0)),'sk'+sid,-6.0,100.0)
                 st.caption(f"PI multiplier from skin: {well_settings(p)['pi']/max(float(clean_num(p.get('pi_m3d_bar'),10)),1e-9):.2f} (J = J₀·C/(C+S), C = {float(clean_num(p.get('skin_reference_factor'),7.0)):.1f})")
                 correlation_select(st,p,'vm'+sid,'tubing',param_key='vlp_model',label='Tubing VLP correlation'); p['correlation']=p['vlp_model']
@@ -409,6 +419,9 @@ with tab_net:
             for k in ['temperature_c','water_cut','gor_sm3sm3']:
                 v=clean_num(row.get(k))
                 if v is not None: e.setdefault('params',{})[k]=v
+    def _load_project_doc(pj):
+        nn,ee=normalize_project(pj); nn,ee,gi=normalize_graph(nn,ee); st.session_state.nodes,st.session_state.edges=(auto_layout(nn,ee) if len({(n['x'],n['y']) for n in nn})<=1 else nn),ee; reset_solve(); st.session_state.graph_issues=gi; st.success('Project loaded'); st.rerun()
+    render_data_tables(st,st.session_state.nodes,st.session_state.edges,solved(),st.session_state.get('forecast'),reset=reset_solve,on_project=_load_project_doc)
     # The canvas and status badge are drawn before this panel; a panel edit must redraw them (type, name, status).
     if _model_fingerprint(st.session_state.nodes,st.session_state.edges)!=_pre_edit:
         st.session_state['_panel_reruns']=st.session_state.get('_panel_reruns',0)+1
@@ -604,7 +617,7 @@ with tab_results:
             else: st.caption('No values for this parameter in the current solve.')
 
 with tab_constraints:
-    with st.container(border=True): render_constraint_editor(st, st.session_state.nodes, st.session_state.edges)
+    st.info('The constraint tables moved to the **Network** tab → *Data tables* → Constraints, next to the layout. This tab shows the check results.')
     r=solved()
     if not r:
         st.info('Solve the network to check the constraints above against the operating point.')
@@ -696,6 +709,8 @@ with tab_groups:
 
 with tab_development:
     render_scenarios(st, st.session_state.nodes, st.session_state.edges)
+    from ui.drainage_view import render_drainage
+    render_drainage(st, st.session_state.nodes, st.session_state.edges)
 
 with tab_uncertainty:
     render_uncertainty(st, st.session_state.nodes, st.session_state.edges)
@@ -816,7 +831,7 @@ with tab_res25:
 
 
 
-with tab_avail: render_availability(st,st.session_state.nodes,st.session_state.edges,solved(),st.session_state.get('forecast'),reset=reset_solve)
+with tab_avail: st.info('Uptime and downtime moved to the **Network** tab → *Data tables* → Uptime, so every input is edited next to the layout.')
 
 with tab_pvt:
     render_pvt(st,st.session_state.nodes,st.session_state.edges,solved)

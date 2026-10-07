@@ -75,6 +75,7 @@ def render_mb(st, nodes, edges, hub):
         if fit.get('note'): (st.warning if 'WARNING' in fit['note'] or 'unphysical' in fit['note'] else st.caption)(fit['note'])
     else: st.warning(fit.get('error', 'no fit'))
     if src == 'Forecast of the model': st.caption('On a forecast of this screening model the balance closes by construction, so the straight lines mainly confirm the model is consistent - they are not independent evidence. Use measured history for that.')
+    if src == 'Measured history': _history_match(st, nodes, tid, series)
     t_v, t_s, t_d, t_p, t_t = st.tabs(['Voidage replacement', 'Straight-line plots', 'Drive indices', 'Pressure & recovery', 'Tables'])
     with t_v:
         va = r['voidage_annual']; iv = r['voidage']
@@ -141,3 +142,39 @@ def _history_input(st, tid, tank, fc):
     except Exception as exc: st.error(f'Check the table: {exc}'); return None
     if len(s) < 3: st.info('Enter at least 3 rows (date, pressure and cumulative volumes).'); return None
     return s
+
+
+def _history_match(st, nodes, tid, series):
+    """Forward history match: replay the measured production through the tank model and fit in-place volume / aquifer to the pressures."""
+    from network import history_match as HM
+    ss = st.session_state; node = next(n for n in nodes if n['id'] == tid); oil = str((node.get('params') or {}).get('fluid_phase', 'oil')).lower() == 'oil'
+    with st.expander('History match: fit the tank model to the measured pressures (what the forecast will use)', expanded=False):
+        st.caption('The measured production is replayed through the same tank model as the forecast; in-place volume, aquifer strength and (oil) compressibility are fitted to the measured pressures. '
+                   'The 95 % range for the in-place volume is a profile range - if it is wide, the record does not pin the volume down and the point estimate must not be trusted.')
+        c1, c2, c3 = st.columns(3)
+        f_n = c1.checkbox('Fit in-place volume', value=True, key=f'hm_n_{tid}'); f_j = c2.checkbox('Fit aquifer strength', value=False, key=f'hm_j_{tid}')
+        f_c = c3.checkbox('Fit compressibility', value=False, key=f'hm_c_{tid}', disabled=not oil)
+        if st.button('Run history match', key=f'hm_run_{tid}', use_container_width=True):
+            with st.spinner('Fitting the tank model…'):
+                ss[f'hm_res_{tid}'] = HM.match_tank(node, series, f_n, f_j, f_c)
+        res = ss.get(f'hm_res_{tid}')
+        if not res: return
+        if res.get('error'): st.warning(res['error']); return
+        u, k = ('Sm³ oil', 1e6) if oil else ('Sm³ gas', 1e9); pre = 'M' if oil else 'G'
+        m1, m2, m3, m4 = st.columns(4); f = res['fitted']; inp = res['input']
+        m1.metric('In place (fitted)', f"{f['N'] / k:,.2f} {pre}{u}", delta=f"{(f['N'] / inp['N'] - 1) * 100:+.0f}% vs input", delta_color='off')
+        rg = res['ranges'].get('N'); m2.metric('95 % range', f"{rg[0] / k:,.1f} – {rg[1] / k:,.1f}" if rg else '—')
+        m3.metric('Pressure RMSE [bar]', f"{res['rmse_bar']:.2f}", delta=f"{res['rmse_bar'] - res['rmse_before_bar']:+.2f} vs input", delta_color='inverse')
+        m4.metric('Match quality', res['quality'])
+        if 'J' in res['fit_params']: st.caption(f"Aquifer J fitted: {f['J']:,.0f} m³/d/bar" + (f" (95 %: {res['ranges']['J'][0]:,.0f} – {res['ranges']['J'][1]:,.0f})" if 'J' in res['ranges'] else ''))
+        if 'ct' in res['fit_params']: st.caption(f"Compressibility fitted: {f['ct']:.2e} 1/bar")
+        for w in res['warnings']: st.warning(w)
+        go = _go(); fig = go.Figure()
+        fig.add_trace(go.Scatter(x=res['dates'], y=res['measured'], mode='markers', name='Measured', marker=dict(color='#333', size=7)))
+        fig.add_trace(go.Scatter(x=res['dates'], y=res['predicted'], mode='lines', name='Matched model', line=dict(color=charts.OIL if oil else charts.GAS, width=2)))
+        fig.add_trace(go.Scatter(x=res['dates'], y=HM.replay(node, series), mode='lines', name='Current input', line=dict(color=charts.LIQUID, width=1.5, dash='dot')))
+        st.plotly_chart(charts.style(fig, 'Reservoir pressure: measured vs model', 'bar', None, 340), use_container_width=True, key=f'hm_fig_{tid}')
+        if st.button('Apply the fitted values to the tank', type='primary', key=f'hm_apply_{tid}', use_container_width=True):
+            ch = HM.apply_match(node, res)
+            for kx in ('hub_cache', 'forecast'): ss.pop(kx, None)
+            ss['solve'] = None; st.success('Tank updated: ' + ', '.join(ch) + '. Re-run the forecast.'); st.rerun()

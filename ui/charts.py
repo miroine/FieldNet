@@ -9,8 +9,9 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-OIL = '#1baf7a'; GAS = '#eb6834'; WATER = '#2a78d6'; LIQUID = '#6b6a66'; INJ = '#4a3aa7'
-CATEGORICAL = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948']
+from ui.shapes import PHASE_COLOR
+OIL = PHASE_COLOR['oil']; GAS = PHASE_COLOR['gas']; WATER = PHASE_COLOR['water']; LIQUID = '#6b6a66'; INJ = '#4a3aa7'
+CATEGORICAL = ['#2a78d6', '#eb9a34', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#6b6a66']   # no red: red is reserved for gas
 PHASE_COLORS = {'Oil': OIL, 'Gas': GAS, 'Water': WATER, 'Liquid': LIQUID, 'Water injection': INJ}
 
 
@@ -29,13 +30,24 @@ def style(fig, title=None, y=None, x=None, height=340, legend=True):
     return fig
 
 
+def series_color(name, i=0):
+    """Phase colour for a series by its name (gas red, oil green, water blue, liquid grey, injection violet); categorical otherwise."""
+    v = str(name).lower().split(' [')[0]
+    if 'inj' in v: return INJ
+    if 'water' in v: return WATER
+    if 'gas' in v or v == 'gor': return GAS
+    if 'oil' in v or 'condensate' in v or 'cgr' in v: return OIL
+    if 'liquid' in v: return LIQUID
+    return CATEGORICAL[i % len(CATEGORICAL)]
+
+
 def lines(df, x, cols, title, y, colors=None, dash=None, height=340):
     fig = go.Figure()
     for i, c in enumerate(cols):
         if c not in df: continue
         name = c.split(' [')[0]
         fig.add_trace(go.Scatter(x=df[x], y=df[c], name=name, mode='lines',
-                                 line=dict(width=2, color=(colors or {}).get(c, CATEGORICAL[i % len(CATEGORICAL)]), dash=(dash or {}).get(c))))
+                                 line=dict(width=2, color=(colors or {}).get(c, series_color(c, i)), dash=(dash or {}).get(c))))
     return style(fig, title, y, None, height, legend=len(cols) > 1)
 
 

@@ -75,7 +75,9 @@ def compute_caps(nn, details, tanks, state, extra_taper=None):
         prm = n.get('params') or {}; rid = prm.get('reservoir_id')
         liq = max(_f(details[n['id']].get('liquid_rate_m3d'), 0.0) or 0.0, 0.0)
         ph = primary_phase(tanks[rid]) if rid in tanks else ('gas' if str(prm.get('ipr_model', '')).lower().startswith('gas') else 'oil')
-        f = _prim_factor(prm, ph); tau = taper_days_of(tanks[rid].params) if rid in tanks and hasattr(tanks[rid], 'params') else DEFAULT_TAPER_DAYS
+        av = min(max(_f(prm.get('availability_factor'), 1.0) or 0.0, 0.0), 1.0)
+        f = _prim_factor(prm, ph) * max(av, 1e-9)   # delivered primary rate = liquid * f * availability
+        tau = taper_days_of(tanks[rid].params) if rid in tanks and hasattr(tanks[rid], 'params') else DEFAULT_TAPER_DAYS
         if rid in tanks and getattr(tanks[rid], 'taper_days', None): tau = tanks[rid].taper_days
         eur = _f(prm.get('eur_cap'), 0.0) or 0.0
         if eur > 0 and n['id'] in state:

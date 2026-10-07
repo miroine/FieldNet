@@ -108,3 +108,28 @@ def test_forecast_tab_shows_assumptions_panel():
     root = run_app('app.py', {'nodes': n, 'edges': e})
     assert ('markdown', '**Recovery factor per tank**') in root.calls and ('markdown', '**Rates per well**') in root.calls
     assert any(c[0] == 'button' and c[1] == 'Apply assumptions' for c in root.calls)
+
+
+def test_tank_z_factor_matches_well_model_and_is_sane_at_hpht():
+    from network.reservoir_mb import z_factor
+    from physics.pvt_model import gas_z
+    for p in (50, 150, 300, 450, 600):
+        assert z_factor(p, 120, 0.7) == pytest.approx(gas_z(p, 120, 0.7), rel=1e-9)
+    assert 1.05 < z_factor(450, 120, 0.7) < 1.2          # was 1.28 with the Papay form
+
+
+def test_volumetric_gas_tank_follows_p_over_z_line():
+    from network.reservoir_mb import Tank, z_factor
+    t = Tank({'id': 'T', 'kind': 'reservoir', 'name': 'T', 'params': {'fluid_phase': 'gas', 'reservoir_pressure_bar': 400, 'temperature_c': 110, 'giip_sm3': 5e9, 'gas_sg': 0.65, 'min_pressure_bar': 5}})
+    pz0 = t.p / z_factor(t.p, t.t, t.gas_sg)
+    for _ in range(4): t.step(0, 0, 5e8, 0, 0, 100)
+    assert (t.p / z_factor(t.p, t.t, t.gas_sg)) / pz0 == pytest.approx(1 - t.gp / t.g, abs=1e-3)
+
+
+def test_rf_cap_accounts_for_availability():
+    from network.assumptions import compute_caps
+    from network.reservoir_mb import Tank
+    tk = Tank({'id': 'T', 'kind': 'reservoir', 'name': 'T', 'params': {'fluid_phase': 'oil', 'stoiip_sm3': 1e6, 'target_rf': 0.1, 'rf_taper_days': 100}})
+    nn = [{'id': 'W', 'kind': 'well', 'params': {'reservoir_id': 'T', 'water_cut': 0.0, 'availability_factor': 0.5}}]
+    caps, shut, _ = compute_caps(nn, {'W': {'liquid_rate_m3d': 5000.0}}, {'T': tk}, {'W': {'cum_oil': 0.0, 'cum_gas': 0.0}})
+    assert caps['W'] * 0.5 == pytest.approx(1e5 / 100, rel=1e-6)    # delivered rate (after uptime) equals R/tau

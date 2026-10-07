@@ -122,6 +122,13 @@ def _upstream_wells(nodes, edges, node_id=None, edge_id=None):
 from solver.constraints import ENFORCEABLE
 
 
+def _choke_stable(result,step_caps):
+    """True when a choked solve is a usable operating point: converged, and the choked wells actually deliver (about) their caps."""
+    p,q,info,d=result
+    if float(info.get('max_abs_residual',0.0))>1e-4: return False
+    want=sum(c[1] for c in step_caps.values()); got=sum(float((d.get(w) or {}).get('liquid_rate_m3d',0.0)) for w in step_caps)
+    return want<=0 or got>=0.85*want
+
 def enforce_capacity_constraints(nodes, edges, solve, *, max_iterations=8, initial_guess=None):
     """Honour facility/connection rate limits by pro-rata choking of upstream wells.
 
@@ -135,7 +142,7 @@ def enforce_capacity_constraints(nodes, edges, solve, *, max_iterations=8, initi
         p,q,info,d=result
         worst=[c for c in info.get('constraints',[]) if c.get('Status')=='VIOLATED' and c.get('Constraint') in ENFORCEABLE]
         if not worst: break
-        changed=False; node_ids={n['id'] for n in ns}
+        changed=False; node_ids={n['id'] for n in ns}; step_caps={}; prev_result=result
         for c in worst:
             # Map the constraint row back to its component (a node capacity or a connection limit).
             comp=c['Component']; cid=c.get('ComponentId')
@@ -152,12 +159,32 @@ def enforce_capacity_constraints(nodes, edges, solve, *, max_iterations=8, initi
                 prm=byid[wid].setdefault('params',{}); old=prm.get('_network_cap_m3d')
                 new=qw*f if old is None else min(float(old),qw*f)
                 if old is not None and new>=float(old)*(1-1e-6): continue     # no tighter than the cap already applied: nothing new to enforce
-                prm['_network_cap_m3d']=new; changed=True
+                step_caps[wid]=(qw if old is None else float(old),new,old); prm['_network_cap_m3d']=new; changed=True
                 actions.append({'well':byid[wid].get('name',wid),'well_id':wid,'constraint':f"{comp} {c['Constraint']}",'cap_m3d':new,
                                 'message':f"{byid[wid].get('name',wid)} choked to {new:.1f} m3/d to honour {comp} {c['Constraint'].lower()} ({c['Limit']:.0f})."})
         if not changed: break
         guess={'pressures':p,'flows':q,'well_rates':{k:v['liquid_rate_m3d'] for k,v in d.items()}}
         result=solve(ns,edges,guess)
+        if step_caps and not _choke_stable(result,step_caps):
+            # A steady choke at this rate is not sustainable (typically the flowline loads up at the lower rate and the wells die, or the
+            # solve stalls). Back off to the tightest cap that still gives a stable operating point instead of returning a collapsed network.
+            lo,hi,best=0.0,1.0,prev_result
+            import solver.steady_state as _ss; _old_budget=_ss.RECOVERY_BUDGET_S; _ss.RECOVERY_BUDGET_S=min(_old_budget,4.0)   # trial solves that collapse must fail fast
+            for _b in range(5):
+                t=0.5*(lo+hi)
+                for wid,(a,b,old) in step_caps.items(): byid[wid]['params']['_network_cap_m3d']=a+t*(b-a)
+                trial=solve(ns,edges,{'pressures':prev_result[0],'flows':prev_result[1],'well_rates':{k:v['liquid_rate_m3d'] for k,v in prev_result[3].items()}})
+                if _choke_stable(trial,{w:(a,a+t*(b-a),o) for w,(a,b,o) in step_caps.items()}): lo=t; best=trial
+                else: hi=t
+            _ss.RECOVERY_BUDGET_S=_old_budget
+            for wid,(a,b,old) in step_caps.items():
+                if old is None and lo==0.0: byid[wid]['params'].pop('_network_cap_m3d',None)
+                else: byid[wid]['params']['_network_cap_m3d']=a+lo*(b-a)
+            result=best
+            result[2]['message']=(str(result[2].get('message',''))+f" | Capacity limit cannot be held by steady choking: below about {sum(a+lo*(b-a) for a,b,_ in step_caps.values())/max(sum(a for a,_,_ in step_caps.values()),1e-9)*100:.0f} % of the natural rate the flowline loads up and the wells stop flowing. "
+                                   "The network is choked as far as it stays stable; the remaining excess is reported as a violation. Options: raise the limit, add a lower-rate well mix, or accept cycling (the forecast cycles wells to honour the volume).").strip(' |')
+            actions.append({'well':'(several)','well_id':None,'constraint':'capacity (stability)','cap_m3d':None,'message':'Choke backed off to the lowest stable rate.'})
+            break
         if float(result[2].get('max_abs_residual',0.0))>1e-4:
             result[2]['message']=(str(result[2].get('message',''))+' | Capacity enforcement stopped: the choked network does not converge (limit far below the wells\' natural rate - check separator/compressor limits and line sizes).').strip(' |')
             break

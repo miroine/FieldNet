@@ -48,9 +48,16 @@ def _f(p, k):
 
 
 def z_factor(p_bar, t_c, gas_sg=0.7):
-    """Papay-type z screening correlation (pseudo-critical from Sutton)."""
-    ppc = (756.8 - 131.0 * gas_sg - 3.6 * gas_sg ** 2) * 0.0689476  # psia -> bar
-    tpc = (169.2 + 349.5 * gas_sg - 74.0 * gas_sg ** 2) / 1.8        # R -> K
+    """Real-gas z. Uses the same Dranchuk-Abou-Kassem correlation as the well / network model (physics.pvt_model.gas_z) so tank
+    material balance, Bg and the wells agree; the earlier Papay form over-predicted z at HPHT (1.3-1.4 vs ~1.12 at 450 bar)."""
+    try:
+        from physics.pvt_model import gas_z
+        z = gas_z(max(p_bar, 0.01), t_c, gas_sg)
+        if math.isfinite(z): return min(max(z, 0.3), 2.0)
+    except Exception:
+        pass
+    ppc = (756.8 - 131.0 * gas_sg - 3.6 * gas_sg ** 2) * 0.0689476  # Papay fallback (pseudo-critical from Sutton)
+    tpc = (169.2 + 349.5 * gas_sg - 74.0 * gas_sg ** 2) / 1.8
     ppr = max(p_bar, 0.01) / ppc; tpr = (t_c + 273.15) / tpc
     z = 1 - 3.53 * ppr / (10 ** (0.9813 * tpr)) + 0.274 * ppr ** 2 / (10 ** (0.8157 * tpr))
     return min(max(z, 0.3), 1.5)

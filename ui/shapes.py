@@ -34,3 +34,42 @@ DASHED = {'water_injector', 'gas_injector', 'water_source', 'gas_source'}   # su
 def shape(kind):
     """-> (outline path, detail path or '', dashed) or None for the default rounded card."""
     return (SHAPES[kind], DETAIL.get(kind, ''), kind in DASHED) if kind in SHAPES else None
+
+
+# ---- phase colours (one set for the layout fills and every chart: gas red, oil green, water blue) -------------------------------
+PHASE_COLOR = {'oil': '#1baf7a', 'gas': '#d93a3a', 'water': '#2a78d6'}
+
+
+def node_phase(node, nodes=()):
+    """Phase that fills a node symbol: 'oil' | 'gas' | 'water', or None for equipment that has no fluid of its own."""
+    k = node.get('kind'); p = node.get('params') or {}
+    if k == 'reservoir': return 'oil' if str(p.get('fluid_phase', 'oil')).lower() == 'oil' else 'gas'
+    if k in ('water_injector', 'water_source', 'water_disposal'): return 'water'
+    if k in ('gas_injector', 'gas_source', 'gas_export'): return 'gas'
+    if k == 'oil_export': return 'oil'
+    if k in ('well', 'injector'):
+        ph = str(p.get('phase') or '').lower()
+        if ph == 'gas_condensate': ph = 'gas'
+        if ph in PHASE_COLOR: return ph
+        tank = next((t for t in nodes if t.get('id') == p.get('reservoir_id') and t.get('kind') == 'reservoir'), None)
+        if tank is not None: return node_phase(tank)
+        return 'gas' if str(p.get('ipr_model', '')).lower().startswith('gas') else 'oil'
+    return None
+
+
+def water_fraction(node):
+    """Fraction of the symbol drawn blue (water) at the bottom: well water cut, tank initial water saturation."""
+    p = node.get('params') or {}; k = node.get('kind')
+    try:
+        if k == 'well': v = float(p.get('water_cut', 0.0))
+        elif k == 'reservoir': v = float(p.get('swi', 0.2))
+        else: return 0.0
+    except (TypeError, ValueError): return 0.0
+    return min(max(v, 0.0), 0.95) if v == v else 0.0
+
+
+def node_scale(node):
+    """Symbol size multiplier set by the user (params.scale), clamped to 0.4 .. 3."""
+    try: v = float((node.get('params') or {}).get('scale', 1.0))
+    except (TypeError, ValueError): return 1.0
+    return min(max(v, 0.4), 3.0) if v == v else 1.0

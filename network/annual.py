@@ -130,14 +130,14 @@ def bar_figure(df, columns, title, unit_label='', stacked=False, cumulative=None
     """Plotly bar chart by year (partial years are hatched via lighter opacity). ``cumulative`` adds a separate line subplot (no dual axes)."""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
-    from ui.charts import style, CATEGORICAL
+    from ui.charts import style, CATEGORICAL, series_color
     rows = 2 if cumulative else 1
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.65, 0.35] if cumulative else [1.0])
     years = df['Year'].tolist(); part = df['Partial'].tolist() if 'Partial' in df else [False] * len(years)
     for i, c in enumerate(columns):
-        fig.add_trace(go.Bar(x=years, y=df[c], name=c, marker=dict(color=CATEGORICAL[i % len(CATEGORICAL)], opacity=[0.45 if p else 0.95 for p in part], line=dict(width=0))), row=1, col=1)
+        fig.add_trace(go.Bar(x=years, y=df[c], name=c, marker=dict(color=series_color(c, i), opacity=[0.45 if p else 0.95 for p in part], line=dict(width=0))), row=1, col=1)
     fig.update_layout(barmode='stack' if stacked else 'group')
     if cumulative:
-        for i, c in enumerate(cumulative): fig.add_trace(go.Scatter(x=years, y=df[c], name=c, mode='lines+markers', line=dict(color=CATEGORICAL[i % len(CATEGORICAL)], width=2)), row=2, col=1)
+        for i, c in enumerate(cumulative): fig.add_trace(go.Scatter(x=years, y=df[c], name=c, mode='lines+markers', line=dict(color=series_color(c.replace('Cum ', ''), i), width=2)), row=2, col=1)
     fig = style(fig, title, height=height + (160 if cumulative else 0)); fig.update_xaxes(dtick=1)
     return fig

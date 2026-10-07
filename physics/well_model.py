@@ -52,6 +52,15 @@ def well_settings(prm: dict) -> dict:
         except (TypeError, ValueError): continue
         if frac>1e-9 and math.isfinite(v) and v>=0: max_rate=min(max_rate,v/frac)
     if not enforce: max_rate=math.inf
+    # Minimum stable rate per phase: below it the well is shut in (liquid loading / minimum facility turndown). Like the maxima, the
+    # per-phase minima are converted to an equivalent liquid rate at the current water cut / GOR (water minimum needs wc>0, gas needs gor>0).
+    min_liq=0.0
+    for key,frac in (('min_liquid_rate_m3d',1.0),('min_oil_rate_m3d',1.0-wc_),('min_water_rate_m3d',wc_),('min_gas_rate_sm3d',(1.0-wc_)*gor_)):
+        v=p.get(key)
+        if v is None: continue
+        try: v=float(v)
+        except (TypeError, ValueError): continue
+        if frac>1e-9 and math.isfinite(v) and v>0: min_liq=max(min_liq,v/frac)
     # Temporary cap written by the capacity-constraint enforcer (never by the user).
     net_cap=p.get('_network_cap_m3d')
     if net_cap is not None:
@@ -105,7 +114,7 @@ def well_settings(prm: dict) -> dict:
         'skin':skin,
         # Below this rate a producer cannot sustain stable flow (liquid loading / heading);
         # it is reported as shut in rather than as a numerically fragile trickle.
-        'min_rate':max(_f(p,'min_rate_m3d',0.01 if _ipr_name(p.get('ipr_model','PI'))=='Gas' else 5.0),0.0),
+        'min_rate':max(max(_f(p,'min_rate_m3d',0.01 if _ipr_name(p.get('ipr_model','PI'))=='Gas' else 5.0),0.0),min_liq),
     }
 
 

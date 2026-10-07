@@ -9,9 +9,11 @@ W, H, JR = 154, 64, 13
 
 
 def _size(n):
-    if n.get('kind') == 'joint': return 2 * JR, 2 * JR
-    if n.get('kind') in ('choke', 'control_valve', 'pump', 'compressor'): return 124, 52
-    return W, H
+    from ui.shapes import node_scale
+    s = node_scale(n)
+    if n.get('kind') == 'joint': return 2 * JR * s, 2 * JR * s
+    if n.get('kind') in ('choke', 'control_valve', 'pump', 'compressor'): return 124 * s, 52 * s
+    return W * s, H * s
 
 
 def network_svg(nodes, edges, labels=None, rates=None, title='FieldNet network', edge_labels=None, widths=None):
@@ -45,12 +47,22 @@ def network_svg(nodes, edges, labels=None, rates=None, title='FieldNet network',
         sh = _shape(k); pad = 22 if sh and k not in ('manifold', 'reservoir', 'compressor') else 12
         if sh:
             tr = f'transform="translate({x:.1f},{y:.1f}) scale({w/100:.4f},{h/100:.4f})"'; dash = ' stroke-dasharray="6 4"' if sh[2] else ''
-            body = (f'<path d="{sh[0]}" {tr} fill="#f7f9fb" stroke="{col}" stroke-width="2" vector-effect="non-scaling-stroke"{dash}/>'
+            from ui.shapes import node_phase, water_fraction, PHASE_COLOR
+            ph = node_phase(n, nodes); fill = '#f7f9fb'; gd = ''
+            if ph:
+                wf = water_fraction(n); fill = PHASE_COLOR[ph]
+                if wf > 0.01 and ph != 'water':
+                    gid = 'pf' + ''.join(ch for ch in str(n['id']) if ch.isalnum())
+                    gd = (f'<defs><linearGradient id="{gid}" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="{PHASE_COLOR["water"]}"/><stop offset="{wf:.3f}" stop-color="{PHASE_COLOR["water"]}"/>'
+                          f'<stop offset="{wf:.3f}" stop-color="{fill}"/><stop offset="1" stop-color="{fill}"/></linearGradient></defs>'); fill = f'url(#{gid})'
+            body = (gd + f'<path d="{sh[0]}" {tr} fill="{fill}" fill-opacity="{0.9 if ph else 1}" stroke="{col}" stroke-width="2" vector-effect="non-scaling-stroke"{dash}/>'
                     + (f'<path d="{sh[1]}" {tr} fill="none" stroke="{col}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>' if sh[1] else ''))
         else:
             body = f'<rect x="{x:.1f}" y="{y:.1f}" width="{w}" height="{h}" rx="9" fill="#f7f9fb" stroke="#455a64" stroke-width="1.3"/><rect x="{x:.1f}" y="{y:.1f}" width="5" height="{h}" rx="2" fill="{col}"/>'
+        from ui.shapes import node_phase as _np
+        txtc = '#fff' if (sh and _np(n, nodes)) else '#123'
         o.append(body +
-                 f'<text x="{x+pad:.1f}" y="{y+16:.1f}" font-size="8" fill="#667">{escape(k.replace("_", " ").upper())}</text><text x="{x+pad:.1f}" y="{y+33:.1f}" font-size="12" font-weight="600" fill="#123">{nm}</text>'
+                 f'<text x="{x+pad:.1f}" y="{y+16:.1f}" font-size="8" fill="#667">{escape(k.replace("_", " ").upper())}</text><text x="{x+pad:.1f}" y="{y+33:.1f}" font-size="12" font-weight="600" fill="{txtc}">{nm}</text>'
                  f'<text x="{x+pad:.1f}" y="{y+h-8:.1f}" font-size="10" fill="#046">{escape(str(labels.get(n["id"], "")))}</text>'
                  f'<circle cx="{x:.1f}" cy="{y+h/2:.1f}" r="5" fill="#fff" stroke="#456"/><circle cx="{x+w:.1f}" cy="{y+h/2:.1f}" r="5" fill="#fff" stroke="#456"/>')
     o.append('</svg>'); return ''.join(o)

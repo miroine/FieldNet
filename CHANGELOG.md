@@ -22,12 +22,33 @@ Stress-swept all 18 examples (well productivity x1/x20/x100, facility limits 100
 - Known limits: compressor / booster-pump examples with a facility limit ~10 % of natural rate, or x20+ productivity, can still fail to converge; they now say so (`recovery` / message) instead of reporting success.
 - Tests: `tests/test_solver_recovery.py`.
 
+### Round 5: drainage strategy, history match, stable-branch choking
+- **Drainage strategy study** (`network/drainage.py`, Development tab): sweeps the number of wells under the facility limits; reports plateau rate and length, recovery factor, binding constraint, optional NPV, a recommended well count with reason (marginal-gain rule or NPV max, raised to meet a plateau target, or flagged unreachable) and a printable HTML page.
+- **Tank history match** (`network/history_match.py`, material balance view): bounded least-squares fit of in-place volume, aquifer productivity and compressibility to measured pressures, profile-likelihood 95 % ranges, identifiability warnings, quality grade and an *Apply to tank* button.
+- **Solver**: capacity enforcement (`solver/v21.py`) now detects when a choked solve falls onto the dead (flowline-loaded) branch, bisects back to the lowest stable choke and reports the violation instead of a collapsed solution.
+- **Manual UI checklist** `MANUAL_UI_CHECKLIST_V32_6.md` (Streamlit is not installable in the build sandbox; live UI untested).
+- Tests: `tests/test_round5.py` (12).
+
+### Round 4: file import, batch editing, tables in the Network tab, minimum rates, symbol size, phase colours
+- **Data tables in the Network tab** (below the layout): *Batch editor*, *Constraints*, *Uptime* and *Import / export* — every input is edited in one place. The Constraints (Results) and Availability & downtime tabs now point there.
+- **Batch editor** (`network/batch_io.py`, `ui/batch_view.py`): one table per group (wells, injectors, tanks, facilities, equipment, manifolds & joints, flowlines), one column per scalar parameter, **Apply changes** writes only the cells you edited; clearing a cell removes the parameter. "Add column" creates any parameter (catalogue or typed key) for the whole group. Nested inputs (trajectory, relperm …) are never touched.
+- **Import input data from a file**: JSON, YAML, Excel (.xlsx, one sheet per group or one sheet for everything) or CSV. A project file replaces the model; any other file is merged by ID (or unique name), writing only filled cells, with a report of unmatched rows and ignored columns. **Export** all inputs as Excel (re-importable), CSV per group, YAML or JSON. `pyyaml` added to requirements.
+- **Minimum stable rate per phase** (`min_oil_rate_m3d`, `min_water_rate_m3d`, `min_gas_rate_sm3d`, `min_liquid_rate_m3d`): converted to an equivalent liquid rate at the current water cut / GOR; the well shuts in ("below min rate") when it cannot hold the highest. Editable in the well panel, the batch editor and by file.
+- **Symbol size**: per element `scale` (0.4–3×) — slider in the property panel, **Size − / Size +** buttons on the canvas for the selected symbol, batch column; ports, links, fit and SVG export follow the size.
+- **Phase colours**: tanks and wells are filled by phase — gas red, oil green, water blue (water injectors / sources blue); a blue band at the bottom shows water cut (wells) or Swi (tanks). The same colours are used in the forecast, yearly and element charts (`charts.series_color`); red is reserved for gas, so the categorical palette no longer contains it.
+- Tests: `tests/test_v326_round4.py`. Not exercised in a live Streamlit session (test harness and a headless-browser canvas screenshot only).
+
 ### Forecast assumptions: recovery factor per tank, rates per well (calibration)
 - **New "Recovery & rate assumptions" panel on the forecast tab** (`ui/assumptions_view.py`, logic in `network/assumptions.py`, `network/calibration.py`). Stored as node params, so they travel with the case; with nothing set the forecast is unchanged.
 - **Target recovery factor per tank** (fraction of the primary phase in place: oil → STOIIP, gas / condensate → GIIP). Recoverable volume R = RF × in place; the tank offtake is capped at (R − cumulative) / τ (τ = taper days, default 365), so production tapers exponentially to the target instead of stopping abruptly, and never overshoots. Wells share the cap pro rata to their network-solved rates and the network is re-solved with the resulting well caps. If the choked rate cannot be held (a flowline that loads up at low rate leaves the wells dead), the cap is delivered as a producing-time fraction instead (reported as deferral). The recovery table gains Target RF / Primary RF / status ("target reached" or "below target (x % short)" when the physics, not the assumption, limits recovery).
 - **Gas p/z helper**: the target RF gives the implied abandonment pressure ((p/z)ab = (p/z)i (1 − RF)); an option writes it to the tank's minimum pressure.
 - **Per-well rate assumptions**: hard maximum rate (primary phase: oil Sm³/d, gas MSm³/d), **calibrate to rate** and **EUR cap** (same taper). Calibration solves a productivity multiplier (applied to PI / Vogel qmax / gas C, `productivity_multiplier`) jointly on the network at start-up conditions, with the wells' own rate limits lifted; it reports wells it cannot match (network-limited, or the target falls in an unstable line-loading region) instead of forcing them.
 - Tests: `tests/test_assumptions.py`. Not exercised in a live Streamlit session (test harness only).
+
+### Audit fixes (v32.6)
+- **Tank gas z-factor** now uses the same Dranchuk–Abou-Kassem correlation as the wells (`physics.pvt_model.gas_z`). The earlier Papay form over-predicted z at high pressure (1.28–1.42 vs ~1.12 at 450 bar), which distorted HPHT gas-tank pressure, Bg and the p/z abandonment helper.
+- RF / EUR taper caps now account for well availability (delivered rate = cap × uptime).
+- Checked and found correct: volumetric gas p/z line, oil compressibility depletion, Bg at standard conditions; no undefined names or syntax errors in the source tree.
 
 ### Round 3: shapes, completion units, solver reset, CGR
 - **GAP-style component symbols** on the canvas and in the SVG export (`ui/shapes.py`, mirrored in the canvas; a test keeps them in sync): tank = cylinder, well / injectors = oval (injectors dashed), separator = horizontal vessel with end caps, manifold = hexagon, outlets point right, sources point in, compressor = trapezoid, pump = oval, choke / valve = octagon. Well cards show gas / oil from the IPR model.
