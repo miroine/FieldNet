@@ -44,22 +44,15 @@ def palette():
     """Ordered list of {group, items:[...]} for the editor palette (JSON-serialisable)."""
     P = []
     def grp(name, items): P.append({'group': name, 'items': items})
-    grp('Reservoir', [_node('reservoir', 'Oil tank', 'Reservoir', {'fluid_phase': 'oil', 'reservoir_pressure_bar': 250.0, 'stoiip_sm3': 30e6, 'temperature_c': 90.0, 'min_pressure_bar': 20.0}),
-                      _node('reservoir', 'Gas tank', 'Reservoir', {'fluid_phase': 'gas', 'reservoir_pressure_bar': 250.0, 'giip_sm3': 5e9, 'temperature_c': 90.0, 'min_pressure_bar': 20.0})])
-    grp('Wells', [_node('well', 'Oil producer', 'Wells', _producer_defaults('oil'), subtype='oil_producer'),
-                  _node('well', 'Gas producer', 'Wells', _producer_defaults('gas'), subtype='gas_producer'),
-                  _node('water_injector', 'Water injector', 'Wells', _injector_defaults('water'), subtype='water_injector'),
-                  _node('gas_injector', 'Gas injector', 'Wells', _injector_defaults('gas'), subtype='gas_injector')])
+    # One palette item per equipment type; the fluid / role / type is chosen in the element's settings (set_well_role, set_separator_type, tank fluid).
+    grp('Reservoir', [_node('reservoir', 'Tank', 'Reservoir', {'fluid_phase': 'oil', 'reservoir_pressure_bar': 250.0, 'stoiip_sm3': 30e6, 'temperature_c': 90.0, 'min_pressure_bar': 20.0})])
+    grp('Wells', [_node('well', 'Well', 'Wells', _producer_defaults('oil'), subtype='oil_producer')])
     grp('Connections', [_node('joint', 'Joint', 'Connections'), _node('manifold', 'Manifold', 'Connections')])
     grp('Equipment', [_node('choke', 'Choke', 'Equipment', {'cv': 80.0}),
                       _node('control_valve', 'Control valve', 'Equipment', {'cv': 80.0, 'opening': 1.0}),
                       _node('pump', 'Pump', 'Equipment', {'shutoff_head_bar': 35.0, 'rated_rate_m3d': 1500.0, 'efficiency': 0.75}),
                       _node('compressor', 'Compressor', 'Equipment', {'pressure_ratio': 1.8, 'max_discharge_bar': 250.0, 'efficiency': 0.75})])
-    grp('Processing', [_node('separator', 'Separator (2-phase)', 'Processing', {'separator_type': 'two_phase'}, 35.0, 'two_phase'),
-                       _node('separator', 'Separator (3-phase)', 'Processing', {'separator_type': 'three_phase'}, 35.0, 'three_phase'),
-                       _node('separator_stage', 'Separator stage', 'Processing', {'separator_type': 'two_phase'}, 35.0, 'two_phase'),
-                       _node('separator', 'Test separator', 'Processing', {'separator_type': 'test'}, 35.0, 'test'),
-                       _node('separator', 'Water treatment', 'Processing', {'separator_type': 'water_treatment'}, 10.0, 'water_treatment')])
+    grp('Processing', [_node('separator', 'Separator', 'Processing', {'separator_type': 'two_phase'}, 35.0, 'two_phase')])
     grp('Boundaries', [_node('sink', 'Sink', 'Boundaries', pressure=35.0), _node('oil_export', 'Oil export', 'Boundaries', pressure=35.0),
                        _node('gas_export', 'Gas export', 'Boundaries', pressure=35.0), _node('water_disposal', 'Water disposal', 'Boundaries', pressure=35.0),
                        _node('water_source', 'Water source', 'Boundaries', pressure=180.0), _node('gas_source', 'Gas source', 'Boundaries', pressure=180.0)])

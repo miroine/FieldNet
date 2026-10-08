@@ -60,6 +60,8 @@ _UNITS = {
     "length": (us.length_to_display, us.length_from_display, _lbl("length")),
     "pi": (us.pi_to_display, us.pi_from_display, lambda p: "Sm³/d/bar" if p == "norwegian_si" else "stb/d/psi"),
     "velocity": (us.velocity_to_display, us.velocity_from_display, lambda p: "m/s" if p == "norwegian_si" else "ft/s"),
+    "temperature": (us.temperature_to_display, us.temperature_from_display, _lbl("temperature")),
+    "gor": (us.gor_to_display, us.gor_from_display, _lbl("gor")),
     "fraction": (lambda v, p: float(v), lambda v, p: float(v), lambda p: "fraction (0–1)"),
     "none": (lambda v, p: float(v), lambda v, p: float(v), lambda p: ""),
 }
@@ -224,6 +226,43 @@ EVENT_CATALOG: list[EventType] = [
        value_kind="number", custom=True,
        help="Any field path, e.g. 'params.max_rate_m3d' or 'pressure_bar'. The value is stored exactly as typed (canonical units)."),
 ]
+
+# --------------------------------------------------------------------------- registry-generated events
+def _registry_event_types() -> list[EventType]:
+    """One EventType per (parameter, element group) of network.param_registry, unless the hand-written catalog already covers it."""
+    from network import param_registry as pr
+    out, seen = [], set()
+    for prm in pr.PARAMS:
+        for g in prm.groups:
+            nk = tuple(pr.NODE_GROUPS.get(g, ())) if g != "line" else ()
+            ek = tuple(pr.EDGE_GROUPS.get(g, ()))
+            if g in ("boundary", "manifold", "tank", "separator", "well", "injector") and g in pr.EDGE_GROUPS:
+                ek = ()
+            if g == "line":
+                nk = ()
+            field = prm.key if prm.top_level else "params." + prm.key
+            if not (nk or ek):
+                continue
+            covered = [t for t in EVENT_CATALOG if t.field == field and set(nk) <= set(t.applies_to) and set(ek) <= set(t.edge_kinds)]
+            if covered:
+                continue
+            tid = f"p_{prm.key}_{g}"
+            if tid in seen:
+                continue
+            seen.add(tid)
+            gl = pr.GROUP_LABEL.get(g, g.title())
+            out.append(EventType(id=tid, label=f"{gl}: set {prm.label}", prop=prm.label[:1].upper() + prm.label[1:], field=field,
+                                 applies_to=nk, edge_kinds=ek, value_kind=prm.kind, unit=prm.unit, min=prm.min, max=prm.max,
+                                 default=prm.default, step=prm.step, choices=prm.choices, unit_text=prm.unit_text,
+                                 bulk_label=f"All {gl.lower()}s" if g in ("well", "injector") else None,
+                                 help=f"Sets the {prm.label} of the {gl.lower()} from the event date (stored in model units; shown in your unit system)."))
+    return out
+
+
+_custom = EVENT_CATALOG.pop()                      # keep "Custom" last
+EVENT_CATALOG.extend(_registry_event_types())
+EVENT_CATALOG.append(_custom)
+
 CATALOG_BY_ID: dict[str, EventType] = {t.id: t for t in EVENT_CATALOG}
 CUSTOM = CATALOG_BY_ID["custom"]
 _BY_LABEL = {t.label.lower(): t for t in EVENT_CATALOG}
@@ -882,7 +921,14 @@ def render_event_builder(st, nodes, edges, events=None, unit_profile="norwegian_
         if kp + "_type" in ss and ss[kp + "_type"] not in type_ids:
             del ss[kp + "_type"]                              # stale selection (network changed)
         c1, c2, c3, c4, c5 = st.columns([2.3, 2.1, 1.7, 1.4, 1.8])
-        et_id = c1.selectbox("Event type", type_ids, format_func=lambda i: CATALOG_BY_ID[i].label, key=kp + "_type")
+        cats = ["All"] + list(dict.fromkeys(t.label.split(":")[0] for t in types if not t.custom)) + ["Custom"]
+        if ss.get(kp + "_cat") not in cats:
+            ss.pop(kp + "_cat", None)
+        cat = c1.selectbox("Element type", cats, key=kp + "_cat")
+        shown_ids = [t.id for t in types if cat == "All" or (cat == "Custom" and t.custom) or t.label.split(":")[0] == cat]
+        if kp + "_type" in ss and ss[kp + "_type"] not in shown_ids:
+            del ss[kp + "_type"]
+        et_id = c1.selectbox("Event type", shown_ids, format_func=lambda i: CATALOG_BY_ID[i].label, key=kp + "_type")
         et = CATALOG_BY_ID[et_id]
         targets = applicable_targets(et, nodes, edges)
         labels = dict(targets)

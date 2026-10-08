@@ -48,6 +48,9 @@ with sync_playwright() as p:
     check(fr.evaluate("!!document.querySelector('.node[data-id=\"s1\"] .pin.target')"),'target IN port highlighted')
     
     pg.mouse.up(); pg.wait_for_timeout(150)
+    check(nmsg()==0 and fr.evaluate("document.getElementById('apply').textContent")=='Apply 1 change' and 'pending' in fr.evaluate("document.getElementById('apply').className"),'edit is staged (nothing sent) and the Apply button turns orange')
+    f.locator('#apply').click(); pg.wait_for_timeout(150)
+    check('done' in fr.evaluate("document.getElementById('apply').className") and fr.evaluate("document.getElementById('apply').textContent")=='✔ Applied','Apply button turns green after sending')
     m=pg.evaluate('window.msgs'); last=m[-1] if m else {}
     check(len(m)==1 and last.get('schema')=='fieldnet.graph/1' and any(e['source']=='w2' and e['target']=='s1' for e in last['edges']) and len(last['edges'])==4,'drop on IN port creates edge and sends one graph payload')
     check(fr.evaluate("!document.querySelector('path.live')"),'live line removed after drop')
@@ -62,6 +65,7 @@ with sync_playwright() as p:
     # node drag
     c=fr.evaluate("(()=>{const r=document.querySelector('.node[data-id=\"m1\"] .nm').getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()")
     pg.mouse.move(*c); pg.mouse.down(); pg.mouse.move(c[0]+60,c[1]+40,steps=5); pg.mouse.up(); pg.wait_for_timeout(100)
+    check(nmsg()==1,'node drag is staged, not sent'); f.locator('#apply').click(); pg.wait_for_timeout(100)
     m=pg.evaluate('window.msgs'); mm=[x for x in m[-1]['nodes'] if x['id']=='m1'][0]; om=[x for x in demo['nodes'] if x['id']=='m1'][0]
     check(nmsg()==2 and mm['x']!=om['x'],'node drag sends moved position')
     # click select
@@ -69,7 +73,7 @@ with sync_playwright() as p:
     pg.mouse.click(*c); pg.wait_for_timeout(100)
     check(pg.evaluate('window.msgs')[-1]['selected']=='w1','click selects and reports selection')
     # states
-    g=pg.evaluate('window.msgs')[-1]
+    g=[x for x in pg.evaluate('window.msgs') if 'nodes' in x][-1]
     for stt in ['SOLVING','FAILED']:
         pg.evaluate('a=>window.renderArgs(a)',{**g,'pressures':{},'rates':{},'status':stt,'status_message':'x'}); pg.wait_for_timeout(80)
         check(fr.evaluate("document.getElementById('badge').textContent")==stt,f'badge shows {stt}')
@@ -89,7 +93,7 @@ with sync_playwright() as p:
     check(fr.evaluate("document.querySelectorAll('path.drain').length")==3,'drainage links drawn as dashed lines (3 before)')
     n0=nmsg(); a=port('T1','out'); t=port('P1','in'); pg.mouse.move(*a); pg.mouse.down(); pg.mouse.move(*t,steps=8)
     check('drains this tank' in fr.evaluate("document.getElementById('status').textContent"),'hover explains tank assignment')
-    pg.mouse.up(); pg.wait_for_timeout(150)
+    pg.mouse.up(); pg.wait_for_timeout(150); f.locator('#apply').click(); pg.wait_for_timeout(100)
     last=pg.evaluate('window.msgs')[-1]; p1=[x for x in last['nodes'] if x['id']=='P1'][0]
     check(nmsg()==n0+1 and p1['params'].get('reservoir_id')=='T1' and len(last['edges'])==len(fe),'tank→well drop assigns reservoir_id and adds no pipe')
     check(fr.evaluate("document.querySelectorAll('path.drain').length")==4,'new drainage link drawn')

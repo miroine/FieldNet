@@ -29,12 +29,24 @@ class Hub:
     def get(self, name): return self.datasets[name].copy()
 
 
+def _well_pi(n):
+    """PI shown in the tables: the Darcy-derived value when the well computes its inflow from reservoir properties."""
+    p = n.get('params') or {}
+    if p.get('darcy') in (True, 'true', 'True', 1):
+        try:
+            from physics.darcy_ipr import darcy_ipr
+            return round(float(darcy_ipr(p, float(p.get('reservoir_pressure_bar') or 200.0), 'gas' if str(p.get('ipr_model')) == 'Gas' else 'oil')['pi']), 3)
+        except Exception:
+            pass
+    return p.get('pi_m3d_bar')
+
+
 def model_tables(nodes, edges):
     wells, tanks, lines = [], [], []
     for n in nodes:
         p = n.get('params') or {}
         if n.get('kind') == 'well':
-            wells.append({'Well': n.get('name') or n['id'], 'Well ID': n['id'], 'Tank': p.get('reservoir_id'), 'Group': p.get('group', ''), 'PI [m3/d/bar]': p.get('pi_m3d_bar'), 'IPR': p.get('ipr_model', 'PI'), 'Skin': p.get('skin', 0.0),
+            wells.append({'Well': n.get('name') or n['id'], 'Well ID': n['id'], 'Tank': p.get('reservoir_id'), 'Group': p.get('group', ''), 'PI [m3/d/bar]': _well_pi(n), 'IPR': ('Darcy ' if p.get('darcy') in (True, 'true', 'True', 1) else '') + str(p.get('ipr_model', 'PI')), 'Skin': p.get('skin', 0.0),
                           'Depth [m]': p.get('depth_m'), 'Tubing ID [m]': p.get('tubing_id_m'), 'Water cut': p.get('water_cut'), 'GOR [Sm3/Sm3]': p.get('gor_sm3sm3'), 'API': p.get('api'), 'Lift': p.get('lift_type', 'none'), 'Fluid': p.get('fluid_name', '')})
         elif n.get('kind') == 'reservoir':
             tanks.append({'Tank': n.get('name') or n['id'], 'Tank ID': n['id'], 'Group': p.get('group', ''), 'Phase': p.get('fluid_phase', 'oil'), 'Pi [bar]': p.get('reservoir_pressure_bar'), 'STOIIP [Sm3]': p.get('stoiip_sm3'),

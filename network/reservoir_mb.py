@@ -67,6 +67,11 @@ def bg_rm3_sm3(p_bar, t_c, gas_sg=0.7):
     return z_factor(p_bar, t_c, gas_sg) * (t_c + 273.15) / T_SC_K * P_SC_BAR / max(p_bar, 0.01)
 
 
+def _cap_ratio(p):
+    try: return float(p.get('gas_cap_m') or 0.0)
+    except (TypeError, ValueError): return 0.0
+
+
 class Tank:
     def __init__(self, node, pvt_table: Optional[PVTTable] = None):
         """Initialize tank with optional real PVT table (v31).
@@ -125,6 +130,9 @@ class Tank:
             self.ct = max(_f(p, 'ct_1bar'), 1e-7)
             self.pv = self.n * self.boi / (1 - self.swi)
             self.g = self.n * self.rsi
+            # Primary gas cap: m = (gas-cap volume)/(oil-zone volume) at initial conditions. The cap expands as pressure falls
+            # (cg ~ 1/p), which props up the pressure; free-gas production from the cap is not tracked separately (screening).
+            self.m_cap = min(max(_cap_ratio(p), 0.0), 10.0); self.vg = self.m_cap * self.n * self.boi
             self.rf_bt = max(_f(p, 'water_breakthrough_rf'), 0.0); self.wc_max = min(max(_f(p, 'max_water_cut'), 0.0), 0.99)
             self.rf_wcmax = max(_f(p, 'rf_at_max_water_cut'), self.rf_bt + 1e-3); self.gor_rise = max(_f(p, 'gor_rise_factor'), 0.0)
         else:
@@ -132,6 +140,22 @@ class Tank:
             self.pv = self.g * self.bgi / (1 - self.swi)
             self.cgr = max(_f(p, 'cgr_sm3_per_msm3'), 0.0) if self.phase == 'gas_condensate' else 0.0
             self.n = self.g * self.cgr / 1e6
+
+    # ---- schedule events ---------------------------------------------------------------
+    def update_params(self, p):
+        """Refresh the tank settings that a schedule event may change over the life (aquifer, abandonment pressure, recovery-factor
+        targets, sweep, water-cut and GOR trends, gas cap). State (pressure, cumulatives) is never touched."""
+        if not isinstance(p, dict): return
+        from network.assumptions import target_rf_of, taper_days_of
+        self.params = p
+        self.jaq = max(_f(p, 'aquifer_pi_m3d_bar'), 0.0); self.pmin = _f(p, 'min_pressure_bar')
+        self.target_rf = target_rf_of(p); self.taper_days = taper_days_of(p)
+        if not (self.rp is not None):
+            self.sweep = min(max(_f(p, 'sweep_efficiency'), 0.05), 1.0)
+        if self.phase == 'oil':
+            self.rf_bt = max(_f(p, 'water_breakthrough_rf'), 0.0); self.wc_max = min(max(_f(p, 'max_water_cut'), 0.0), 0.99)
+            self.rf_wcmax = max(_f(p, 'rf_at_max_water_cut'), self.rf_bt + 1e-3); self.gor_rise = max(_f(p, 'gor_rise_factor'), 0.0)
+            self.m_cap = min(max(_cap_ratio(p), 0.0), 10.0); self.vg = self.m_cap * self.n * self.boi
 
     # ---- external (simulator) prediction --------------------------------------------
     def apply_external(self, day, t0=None):
@@ -239,11 +263,13 @@ class Tank:
     # ---- material balance -----------------------------------------------------------
     def _ct_eff(self, p):
         """Effective compressibility (solution-gas expansion below the bubble point)."""
-        if self.phase != 'oil' or p >= self.pb: return self.ct
+        if self.phase != 'oil': return self.ct
+        cap = (self.vg / max(p, 1.0) / self.pv) if getattr(self, 'vg', 0.0) > 0 else 0.0   # gas-cap expansion compliance, as an equivalent compressibility
+        if p >= self.pb: return self.ct + cap
         so = 1 - self.swi
         if self._table:
-            return self.ct + so * self.pvt.get_bg(p, self.t) * (self.pvt.get_gor(p) / max(self.pb, 1.0)) / self.pvt.get_bo(p, self.t)
-        return self.ct + so * bg_rm3_sm3(p, self.t, self.gas_sg) * (self.rsi / max(self.pb, 1.0)) / self.boi
+            return self.ct + cap + so * self.pvt.get_bg(p, self.t) * (self.pvt.get_gor(p) / max(self.pb, 1.0)) / self.pvt.get_bo(p, self.t)
+        return self.ct + cap + so * bg_rm3_sm3(p, self.t, self.gas_sg) * (self.rsi / max(self.pb, 1.0)) / self.boi
 
     def step(self, oil_sm3, water_m3, gas_sm3, water_inj_m3=0.0, gas_inj_sm3=0.0, dt_days=0.0):
         """Material balance step using real PVT table."""

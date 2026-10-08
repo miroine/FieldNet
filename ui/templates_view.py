@@ -9,7 +9,7 @@ CLEAR_KEYS = ('forecast', 'forecast_hash', 'sched_result', 'scn_results', 'wc_re
 
 def load_template(st, key, reset):
     """Replace the model on screen by a template and remember its suggested forecast settings (read by the forecast tab)."""
-    ss = st.session_state; t = TEMPLATES[key]; ss.nodes, ss.edges = build(key)
+    ss = st.session_state; t = TEMPLATES[key]; ss.nodes, ss.edges = build(key); ss['canvas_epoch'] = ss.get('canvas_epoch', 0) + 1
     for k in CLEAR_KEYS: ss.pop(k, None)
     ss['tpl_forecast'] = {'start': t['start'], 'years': t['years'], 'step': t['step'], 'template': key}
     ss['loaded_template'] = key

@@ -34,8 +34,10 @@ def render_prediction_sources(st, nodes, edges):
         mode = st.radio('Drive this tank by', ['material_balance', 'external'], index=1 if prm.get('prediction_mode') == 'external' else 0, horizontal=True,
                         format_func={'material_balance': 'Material balance', 'external': 'External simulator table'}.get, key='ps_mode_' + tid)
         if mode == 'external':
+            from ui.eclipse_view import render_eclipse_import
+            render_eclipse_import(st, tid, prm)
             up = st.file_uploader('Simulator export (CSV: date or time_days, reservoir pressure; optional water cut, GOR)', type=['csv', 'txt'], key='ps_up_' + tid)
-            rows = list(prm.get('external_table') or [])
+            rows = list(ss.get('ps_ecl_tank_' + tid) or prm.get('external_table') or [])
             if up is not None:
                 from network.prediction_sources import parse_external_csv
                 try:
@@ -79,6 +81,7 @@ def render_prediction_sources(st, nodes, edges):
     elif kind == 'rates':
         st.caption('CSV columns: date, well, oil, water, gas[, pressure]. Wells are matched by node id or name; the rates become each well\'s potential cap with water cut and GOR.')
         up = st.file_uploader('Simulator well rates', type=['csv'], key='ps_rates_up')
+        if up is None and ss.get('ps_ecl_wells'): st.info(f"{len(ss['ps_ecl_wells'])} well-rate rows from the Eclipse files are ready to apply.")
     rb = start_run(st, 'Apply to selected wells', key='ps_apply_wells', type='primary', model_hash=graph_hash(nodes, edges), disabled=not sel)
     if rb:
         try:
@@ -86,8 +89,8 @@ def render_prediction_sources(st, nodes, edges):
             elif kind == 'none': ss.nodes = clear_source(nodes, sel)
             else:
                 from network.simulator_link import import_rate_schedule, apply_rate_schedule
-                if up is None: raise ValueError('Upload a rates CSV first')
-                ss.nodes = apply_rate_schedule(nodes, import_rate_schedule(up.getvalue().decode('utf-8-sig')))
+                if up is None and not ss.get('ps_ecl_wells'): raise ValueError('Upload a rates CSV (or read Eclipse files above) first')
+                ss.nodes = apply_rate_schedule(nodes, import_rate_schedule(up.getvalue().decode('utf-8-sig')) if up is not None else ss['ps_ecl_wells'])
             rb.finish(); st.rerun()
         except Exception as exc: rb.fail(str(exc)); rb.finish()
     st.caption('Fine-tune one well (qi, Di, b, table rows, water-cut / GOR tables) in the Network tab → select the well → *Prediction source*.')

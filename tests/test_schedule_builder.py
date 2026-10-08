@@ -16,7 +16,7 @@ from ui.schedule_builder import (ALL_TARGETS, CATALOG_BY_ID, EVENT_CATALOG, appl
                                  describe_event, events_from_csv, events_to_csv, events_to_forecast, events_to_frame,
                                  frame_to_events, validate_events)
 
-KNOWN_TOP_LEVEL = {"pressure_bar", "diameter_m"}
+KNOWN_TOP_LEVEL = {"pressure_bar", "diameter_m", 'length_m', 'roughness_m', 'elevation_change_m'}
 NEW_SOLVER_FIELDS = {
     "params.max_oil_rate_m3d", "params.max_water_rate_m3d", "params.max_gas_rate_sm3d", "params.max_liquid_rate_m3d",
     "params.max_drawdown_bar", "params.min_bhp_bar", "params.max_velocity_ms", "params.max_rate_m3d", "params.opening",

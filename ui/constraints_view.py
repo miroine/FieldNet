@@ -2,6 +2,7 @@
 from __future__ import annotations
 import pandas as pd
 from ui.widgets import clean_num
+from ui.run_button import style_form_submit, apply_notice
 
 BOUNDARY = ('sink', 'separator', 'separator_stage', 'oil_export', 'gas_export', 'water_disposal')
 COLS = ['Liquid capacity / max rate [Sm3/d]', 'Min pressure [bar]', 'Max pressure [bar]', 'Min BHP [bar]']
@@ -51,11 +52,15 @@ def render_constraint_editor(st, nodes, edges):
     st.caption('Blank = no limit. Liquid capacity applies to separators/exports (inflow), wells (rate cap, enforced in the well equation) and connections (maximum rate). Pressures in bar. Greyed cells do not apply to that component type.')
     df = constraint_table(nodes, edges)
     sig = str(abs(hash(df.to_json())))
-    ed = st.data_editor(df, hide_index=True, use_container_width=True, key='cons_edit_' + sig, disabled=['ID', 'Name', 'Type'],
-                        column_config={c: st.column_config.NumberColumn(min_value=0.0, format='%.1f') for c in COLS})
-    c1, c2 = st.columns([1, 3])
-    if c1.button('Apply constraints', type='primary', use_container_width=True, key='cons_apply'):
+    # A form: typing in the grid sends nothing to the server until Apply is pressed (no rerun per cell).
+    with st.form('cons_form_' + sig, clear_on_submit=False, border=False):
+        ed = st.data_editor(df, hide_index=True, use_container_width=True, key='cons_edit_' + sig, disabled=['ID', 'Name', 'Type'],
+                            column_config={c: st.column_config.NumberColumn(min_value=0.0, format='%.1f') for c in COLS})
+        go = st.form_submit_button('Apply constraints', type='primary', use_container_width=True)
+    style_form_submit(st)
+    if go:
         n = apply_constraint_table(nodes, edges, ed)
-        st.session_state.cons_msg = f'{n} constraint value(s) updated. Re-solve the network to evaluate them.' if n else 'No changes.'
+        st.session_state.cons_msg = (f'{n} constraint value(s) updated. Re-solve the network to evaluate them.', True) if n else ('No changes to apply.', False)
         st.rerun()
-    if st.session_state.get('cons_msg'): c2.info(st.session_state.pop('cons_msg'))
+    if st.session_state.get('cons_msg'):
+        msg, ok = st.session_state.pop('cons_msg'); apply_notice(st, msg, 'applied' if ok else 'pending')

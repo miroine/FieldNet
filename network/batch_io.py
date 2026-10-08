@@ -20,7 +20,7 @@ GROUPS = {
 }
 EDGE_CORE = ('length_m', 'diameter_m', 'roughness_m', 'elevation_change_m')
 NODE_CORE = ('pressure_bar',)
-BOOL_KEYS = ('available', 'follow_wells', 'enabled', 'closed', 'open')
+BOOL_KEYS = ('masked', 'available', 'follow_wells', 'enabled', 'closed', 'open')
 ID_HEADERS = ('id', 'well id', 'tank id', 'node id', 'edge id', 'element id', 'element', 'tag')
 SKIP_HEADERS = ('kind', 'type', 'source', 'target', 'x', 'y')
 PRIORITY = ('reservoir_id', 'available', 'availability_factor', 'scale', 'max_liquid_rate_m3d', 'max_oil_rate_m3d', 'max_water_rate_m3d', 'max_gas_rate_sm3d',
@@ -28,10 +28,10 @@ PRIORITY = ('reservoir_id', 'available', 'availability_factor', 'scale', 'max_li
             'target_rf', 'rf_taper_days', 'eur_cap', 'calibrate_rate', 'productivity_multiplier')
 # parameters offered by "Add column" (the batch editor creates the column even when no element has a value yet)
 CATALOG = {
-    'Wells': ['max_liquid_rate_m3d', 'max_oil_rate_m3d', 'max_water_rate_m3d', 'max_gas_rate_sm3d', 'min_liquid_rate_m3d', 'min_oil_rate_m3d', 'min_water_rate_m3d',
+    'Wells': ['masked', 'max_liquid_rate_m3d', 'max_oil_rate_m3d', 'max_water_rate_m3d', 'max_gas_rate_sm3d', 'min_liquid_rate_m3d', 'min_oil_rate_m3d', 'min_water_rate_m3d',
               'min_gas_rate_sm3d', 'min_bhp_bar', 'availability_factor', 'scale', 'eur_cap', 'calibrate_rate', 'productivity_multiplier', 'skin', 'water_cut', 'gor_sm3sm3'],
-    'Injectors': ['max_rate_m3d', 'max_whp_bar', 'availability_factor', 'scale', 'injectivity_m3d_bar'],
-    'Tanks': ['target_rf', 'rf_taper_days', 'min_pressure_bar', 'aquifer_pi_m3d_bar', 'swi', 'scale'],
+    'Injectors': ['masked', 'max_rate_m3d', 'max_whp_bar', 'availability_factor', 'scale', 'injectivity_m3d_bar'],
+    'Tanks': ['gas_cap_m', 'target_rf', 'rf_taper_days', 'min_pressure_bar', 'aquifer_pi_m3d_bar', 'swi', 'scale', 'masked'],
     'Facilities': ['max_liquid_rate_m3d', 'max_oil_rate_m3d', 'max_gas_rate_sm3d', 'max_water_rate_m3d', 'min_pressure_bar', 'max_pressure_bar', 'availability_factor', 'scale'],
     'Equipment': ['max_power_kw', 'availability_factor', 'scale'],
     'Manifolds & joints': ['max_pressure_bar', 'min_pressure_bar', 'availability_factor', 'scale'],

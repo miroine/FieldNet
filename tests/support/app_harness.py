@@ -76,7 +76,9 @@ class DG:
     def data_editor(self, df, **kw): return df
     def dataframe(self, *a, **kw): self._log('dataframe', ''); 
     def progress(self, *a, **kw): return DG(self.root)
-    def rerun(self): raise Rerun()
+    def fragment(self, func=None, **kw): return func if func is not None else (lambda f: f)   # a fragment runs inline in the fake
+    def form_submit_button(self, label, key=None, **kw): self._reg('form_submit_button', label, key); self._log('form_submit_button', label); return False
+    def rerun(self, *a, **kw): raise Rerun()
     def stop(self): raise Rerun()
     def set_page_config(self, *a, **kw): pass
     def cache_data(self, *a, **kw):

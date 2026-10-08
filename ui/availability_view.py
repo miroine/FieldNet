@@ -1,6 +1,7 @@
 """Availability & downtime page: uptime of wells, compressors, pumps, separators / hosts, lines ... and its effect on the prognosis."""
 from __future__ import annotations
 import pandas as pd
+from ui.run_button import style_form_submit, apply_notice
 from network import availability as av
 
 
@@ -23,13 +24,17 @@ def render_availability(st, nodes, edges, results, forecast, reset=None):
     if reg.empty: st.info('No elements.'); return
     kinds = sorted(reg['Kind'].dropna().unique()); pick = st.multiselect('Show kinds', kinds, default=kinds, key='av_kinds')
     view = reg[reg['Kind'].isin(pick)]
-    ed = st.data_editor(view, hide_index=True, use_container_width=True, key='av_editor', disabled=['Type', 'ID', 'Name', 'Kind', 'Effective uptime [%]'],
-                        column_config={'Uptime [%]': st.column_config.NumberColumn(min_value=0.0, max_value=100.0, format='%.1f'), 'MTBF [d]': st.column_config.NumberColumn(min_value=0.0),
-                                       'MTTR [d]': st.column_config.NumberColumn(min_value=0.0), 'Planned downtime [d/yr]': st.column_config.NumberColumn(min_value=0.0, max_value=365.0)})
-    if c3.button('Apply to the model', key='av_apply', type='primary', use_container_width=True):
+    with st.form('av_form_' + str(abs(hash(view.to_json(default_handler=str)))), border=False):   # nothing is sent while typing in the grid
+        ed = st.data_editor(view, hide_index=True, use_container_width=True, key='av_editor', disabled=['Type', 'ID', 'Name', 'Kind', 'Effective uptime [%]'],
+                            column_config={'Uptime [%]': st.column_config.NumberColumn(min_value=0.0, max_value=100.0, format='%.1f'), 'MTBF [d]': st.column_config.NumberColumn(min_value=0.0),
+                                           'MTTR [d]': st.column_config.NumberColumn(min_value=0.0), 'Planned downtime [d/yr]': st.column_config.NumberColumn(min_value=0.0, max_value=365.0)})
+        apply_av = st.form_submit_button('Apply to the model', type='primary', use_container_width=True)
+    style_form_submit(st)
+    if apply_av:
         n = av.apply_register(nodes, edges, ed.to_dict('records')); ss.pop('hub_cache', None); ss.pop('forecast', None)
         if reset: reset()
-        st.success(f'{n} elements updated. Re-run the forecast.'); st.rerun()
+        ss['av_msg'] = f'{n} elements updated. Re-run the forecast.'; st.rerun()
+    if ss.get('av_msg'): apply_notice(st, ss.pop('av_msg'), 'applied')
     if not av.has_any(nodes, edges): st.info('No downtime set: the prognosis assumes 100 % uptime.'); 
     if results and results[0]:
         p, q, info, d = results; f = av.delivery_factors(nodes, edges, q); names = {n['id']: n.get('name', n['id']) for n in nodes}

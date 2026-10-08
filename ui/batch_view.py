@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import pandas as pd
 from network import batch_io as B
+from ui.run_button import style_form_submit, apply_notice
 
 
 def _invalidate(ss, reset=None):
@@ -47,12 +48,17 @@ def _batch(st, nodes, edges, reset):
     st.caption(f'{len(df)} element(s), {len(cols)} parameter column(s). Blank = not set (clearing a cell removes the parameter). Pasting a column from Excel works.')
     sig = str(abs(hash(df.to_json(default_handler=str))))
     fixed = [c for c in ('ID', 'Kind', 'From', 'To') if c in df.columns]
-    ed = st.data_editor(df, hide_index=True, use_container_width=True, key=f'bt_ed_{g}_{sig}', disabled=fixed)
-    if st.button('Apply changes to the model', type='primary', key='bt_apply', use_container_width=True):
+    with st.form(f'bt_form_{g}_{sig}', border=False):   # nothing is sent to the server while typing in the grid
+        ed = st.data_editor(df, hide_index=True, use_container_width=True, key=f'bt_ed_{g}_{sig}', disabled=fixed)
+        go = st.form_submit_button('Apply changes to the model', type='primary', use_container_width=True)
+    style_form_submit(st)
+    if go:
         n = B.apply_table(nodes, edges, g, ed, df)
-        if n: _invalidate(ss, reset); st.success(f'{n} value(s) updated. Re-solve the network and re-run the forecast.')
-        else: st.info('No changes to apply.')
+        ss['bt_msg'] = (f'{n} value(s) updated. Re-solve the network and re-run the forecast.', True) if n else ('No changes to apply.', False)
+        if n: _invalidate(ss, reset)
         st.rerun()
+    if ss.get('bt_msg'):
+        msg, ok = ss.pop('bt_msg'); apply_notice(st, msg, 'applied' if ok else 'pending')
 
 
 def _import_export(st, nodes, edges, reset, on_project):

@@ -70,6 +70,9 @@ def separator_type_editor(st, node):
     from network.features import SEPARATOR_TYPES, set_separator_type
     p = node.setdefault('params', {}); cur = p.get('separator_type', 'two_phase'); sid = node['id']
     cur = cur if cur in SEPARATOR_TYPES else 'two_phase'
+    k = synced_select(st, 'Use as', ['separator', 'separator_stage'], node.get('kind') if node.get('kind') in ('separator', 'separator_stage') else 'separator', 'sepkind' + sid,
+                      format_func={'separator': 'Separator', 'separator_stage': 'Separator stage (in a train)'}.get)
+    if k != node.get('kind'): node['kind'] = k
     t = synced_select(st, 'Separator type', list(SEPARATOR_TYPES), cur, 'septype' + sid, format_func=SEPARATOR_TYPES.get)
     if t != cur: set_separator_type(node, t)
 

@@ -101,6 +101,8 @@ def iter_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, 
     import copy as _copy
     from datetime import timedelta
     from network.reservoir_mb import tanks_from_nodes, apply_tank_links, communication_transfers
+    from network.masking import strip_masked
+    nodes,edges=strip_masked(nodes,edges)
     base=copy.deepcopy(nodes); dep=depletion or {}; state={}; guess=None; workers=int(workers or 1)
     if vlp_segments:   # run-speed option: fewer tubing segments per well VLP (explicit per-well settings are kept)
         for n in base:
@@ -169,6 +171,8 @@ def iter_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, 
         dt_days=min(step_days, max(horizon_days-t, 0))
         date=(t0+timedelta(days=t)).date().isoformat()
         nn0,ee=apply_events(base,edges,events,date)
+        for _n in nn0:
+            if _n.get('id') in tanks: tanks[_n['id']].update_params(_n.get('params') or {})
         yield _event('stage','Solving network at '+date,date)
         try: nn,info,details=solve_now(nn0,date)
         except Exception as exc:

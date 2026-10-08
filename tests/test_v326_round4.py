@@ -131,6 +131,6 @@ def test_workbook_round_trip_is_lossless_for_scalar_inputs():
 def test_network_tab_holds_all_data_tables_and_old_tabs_point_there():
     n, e = _case(); root = run_app('app.py', {'nodes': n, 'edges': e})
     assert ('subheader', 'Data tables — edit all inputs in one place') in root.calls
-    assert ('button', 'Apply changes to the model') in root.calls and ('button', 'Apply constraints') in root.calls
+    assert ('form_submit_button', 'Apply changes to the model') in root.calls and ('form_submit_button', 'Apply constraints') in root.calls   # tables are forms (round 6)
     assert any(c[0] == 'info' and 'moved to the **Network** tab' in str(c[1]) for c in root.calls)
     assert any(c[0] == 'button' and 'Fill typical uptimes' in c[1] for c in root.calls)           # the uptime table now renders from the Network tab

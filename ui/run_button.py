@@ -14,7 +14,8 @@ model is unchanged), amber while running, red after ``rb.fail``. Colours use Str
 from __future__ import annotations
 import time
 
-COLORS = {'done': ('#1b8a3a', '#157030'), 'running': ('#d98e04', '#b87700'), 'failed': ('#c0392b', '#992d22')}
+COLORS = {'done': ('#1b8a3a', '#157030'), 'running': ('#d98e04', '#b87700'), 'failed': ('#c0392b', '#992d22'),
+          'pending': ('#e8710a', '#b85a08'), 'applied': ('#1b8a3a', '#157030'), 'idle': ('#5b6573', '#454d59')}
 
 
 def _css(key, status):
@@ -70,3 +71,15 @@ def run_button(st, label, key, model_hash=None, **kw):
     if rb is None: return
     yield rb
     rb.finish()
+
+
+def apply_notice(st, text, kind='applied'):
+    """Coloured message: 'applied' green, 'pending' orange (changes waiting for Apply), 'failed' red."""
+    c = {'applied': ('#e6f4ea', '#1b8a3a', '✔'), 'pending': ('#fff1e0', '#e8710a', '●'), 'failed': ('#fdecea', '#c0392b', '✖')}[kind]
+    st.markdown(f'<div style="background:{c[0]};border-left:5px solid {c[1]};padding:.5rem .8rem;border-radius:4px;color:#1d2530;margin:.25rem 0"><b style="color:{c[1]}">{c[2]}</b> {text}</div>', unsafe_allow_html=True)
+
+
+def style_form_submit(st, status='pending'):
+    """Colour the primary submit buttons of forms (Apply buttons of the data tables) - orange while changes wait for Apply."""
+    bg, border = COLORS[status]
+    st.markdown(f'<style>[data-testid="stBaseButton-primaryFormSubmit"],button[kind="primaryFormSubmit"]{{background-color:{bg} !important;border-color:{border} !important;color:#fff !important;font-weight:700}}</style>', unsafe_allow_html=True)

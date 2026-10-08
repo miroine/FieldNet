@@ -41,7 +41,7 @@ def current_extras(ss):
 def load_case_into_editor(st, case, reset):
     import copy
     ss = st.session_state
-    ss.nodes, ss.edges = copy.deepcopy(case['nodes']), copy.deepcopy(case['edges'])
+    ss.nodes, ss.edges = copy.deepcopy(case['nodes']), copy.deepcopy(case['edges']); ss['canvas_epoch'] = ss.get('canvas_epoch', 0) + 1
     if case.get('unit_profile'): ss.unit_profile = case['unit_profile']
     ex = case.get('extras') or {}
     for k, v in SESSION_EXTRAS.items():

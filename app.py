@@ -66,7 +66,7 @@ from solver.diagnostics import solver_diagnostics
 from physics.well_model import well_settings
 from ui.forecast_view import render_forecast
 from ui.advanced_view import render_advanced, calibration as render_well_test_calibration
-from ui.run_button import run_button, style_button
+from ui.run_button import run_button, style_button, apply_notice, style_form_submit
 from ui.prediction_view import render_prediction_sources
 from ui.development_view import render_scenarios
 from ui.constraints_view import render_constraint_editor
@@ -175,16 +175,40 @@ def request_solve():
     st.session_state.solve_request=True; st.rerun()
 
 
+def bump_canvas():
+    """The model was replaced wholesale (blank page, template, project): tell the canvas to drop its staged edits and re-fit."""
+    st.session_state['canvas_epoch']=st.session_state.get('canvas_epoch',0)+1
+
+
+def blank_page():
+    from ui.templates_view import CLEAR_KEYS
+    ss=st.session_state; ss.nodes=[]; ss.edges=[]; reset_solve()
+    for k in CLEAR_KEYS+('loaded_template','tpl_forecast','canvas_rev','graph_issues'): ss.pop(k,None)
+    ss['selected']=None; bump_canvas(); ss['_blank_msg']=True
+
+
+def blank_page_control(stx,where):
+    """'Start from a blank page' with a confirmation step (it empties the layout; save a case first if you want to keep it)."""
+    if not st.session_state.get('_blank_ask_'+where):
+        if stx.button('🗋 Start from a blank page',use_container_width=True,key='blank_btn_'+where,help='Empty drawing: remove every component and connection, then build the network from the palette.'):
+            st.session_state['_blank_ask_'+where]=True; st.rerun()
+        return
+    stx.warning('Remove everything from the layout? Save the case first if you want to keep it.')
+    a,b=stx.columns(2)
+    if a.button('Yes, clear',type='primary',use_container_width=True,key='blank_yes_'+where): st.session_state.pop('_blank_ask_'+where,None); blank_page(); st.rerun()
+    if b.button('Cancel',use_container_width=True,key='blank_no_'+where): st.session_state.pop('_blank_ask_'+where,None); st.rerun()
+
+
 with st.sidebar:
     st.header('Display')
     st.radio('Primary phase',PHASE_PREFS,horizontal=True,key='primary_phase_pref',help='Which phase leads the cards, charts, nodal plots and network labels. Auto follows the model: gas rate for a gas field, oil for an oil field.')
     st.session_state['_phase_resolved']=resolve_phase(st.session_state.get('primary_phase_pref','Auto'),st.session_state.nodes,solved(),st.session_state.get('forecast'))
     st.caption(f"Showing **{st.session_state['_phase_resolved'].lower()}** as the primary phase.")
     st.header('Component palette')
-    kind=st.selectbox('Component',['reservoir','well','manifold','separator','separator_stage','water_source','gas_source','water_injector','gas_injector','oil_export','gas_export','water_disposal','sink']); name=st.text_input('Name',f'{kind.upper()}-{len(st.session_state.nodes)+1:02d}')
+    kind=st.selectbox('Component',['reservoir','well','manifold','separator','water_source','gas_source','oil_export','gas_export','water_disposal','sink'],format_func=lambda k:{'reservoir':'tank'}.get(k,k.replace('_',' '))); name=st.text_input('Name',f"{'TANK' if kind=='reservoir' else kind.upper()}-{len(st.session_state.nodes)+1:02d}")
     if st.button('Add component',use_container_width=True):
         nid=str(uuid.uuid4())[:8]; pressure=None; prm={}
-        if kind=='reservoir': prm={'reservoir_pressure_bar':250.0,'pore_volume_m3':2000000.0,'total_compressibility_1bar':8e-5,'min_pressure_bar':20.0}
+        if kind=='reservoir': prm={'fluid_phase':'oil','reservoir_pressure_bar':250.0,'pore_volume_m3':2000000.0,'total_compressibility_1bar':8e-5,'min_pressure_bar':20.0}
         if kind=='well': prm={'reservoir_pressure_bar':220.0,'ipr_model':'PI','pi_m3d_bar':10.0,'qmax_m3d':1500.0,'initial_rate_m3d':500.0,'depth_m':2000.0,'tubing_id_m':0.0889,'tubing_roughness_m':4.5e-5,'temperature_c':70.0,'water_cut':0.2,'gor_sm3sm3':100.0,'api':35.0,'gas_sg':0.75,'vlp_model':'Beggs-Brill','available':True}
         if kind in ('sink','separator','separator_stage','oil_export','gas_export','water_disposal'): pressure=35.0
         if kind in ('water_source','gas_source'): pressure=180.0
@@ -192,19 +216,18 @@ with st.sidebar:
         n_existing=len(st.session_state.nodes)
         st.session_state.nodes.append({'id':nid,'kind':kind,'name':name,'pressure_bar':pressure,'x':60+(n_existing%4)*200,'y':60+(n_existing//4)*120,'params':prm}); st.rerun()
     st.caption('Connect components in the editor: drag from an OUT port onto another component’s IN port.')
+    blank_page_control(st,'sb')
     st.divider(); st.markdown('**Load an example**')
     _tpl_key=st.selectbox('Example / template',list(TEMPLATES),index=list(TEMPLATES).index('demo_waterflood_field'),format_func=lambda k:f"{TEMPLATES[k]['name']} ({TEMPLATES[k]['category']})",key='sb_tpl')
     st.caption(TEMPLATES[_tpl_key]['shows'])
-    if st.button('Load example',use_container_width=True,key='sb_tpl_load'): load_template(st,_tpl_key,reset_solve); st.rerun()
+    if st.button('Load example',use_container_width=True,key='sb_tpl_load'): load_template(st,_tpl_key,reset_solve); bump_canvas(); st.rerun()
 
-G=st.tabs(['🗺️ Network','🛢️ Reservoir & wells','📊 Results','📈 Prognosis','🎯 Calibration','🎲 Uncertainty','📁 Cases & Data','🧰 Tools'])
+G=st.tabs(['🗺️ Network','🛢️ Reservoir & wells','📊 Results','📈 Prognosis','📁 Cases & Data','🧰 Tools'])
 tab_net=G[0]
-with G[1]: tab_nodal,tab_tanks,tab_groups,tab_sources,tab_pvt=st.tabs(['Nodal analysis','Tanks & coupling','Groups','Prediction source','Fluid & PVT'])
+with G[1]: tab_nodal,tab_tanks,tab_groups,tab_sources,tab_pvt,tab_cal=st.tabs(['Nodal analysis','Tanks & coupling','Groups','Prediction source','Fluid & PVT','Calibration'])
 with G[2]: tab_results,tab_diag,tab_elem=st.tabs(['Summary & constraints','Profiles & flow assurance','Element results'])
-with G[3]: tab_forecast,tab_annual,tab_avail,tab_development=st.tabs(['Development schedule','Yearly profiles','Availability & downtime','Scenarios & well count'])
-with G[4]: tab_cal=st.container()
-with G[5]: tab_uncertainty,tab_rel=st.tabs(['Monte Carlo','Reliability'])
-with G[7]: tab_ops,tab_qa28,tab_io27=st.tabs(['Engineering tools','Model checks','Import / export & snapshots'])
+with G[3]: tab_forecast,tab_annual,tab_development,tab_uncertainty,tab_rel=st.tabs(['Forecast','Yearly profiles','Drainage strategy & well count','Monte Carlo','Reliability'])
+with G[5]: tab_ops,tab_qa28,tab_io27=st.tabs(['Engineering tools','Model checks','Import / export & snapshots'])
 # merged sections: blocks below write into the same tab in code order
 tab_constraints=tab_results; tab_fa=tab_diag; tab_res25=tab_tanks; tab_comp=tab_ops; tab_adv=tab_ops; tab_scen29=tab_io27
 with tab_net:
@@ -231,9 +254,11 @@ with tab_net:
         except Exception: _nlab,_elab=canvas_labels(st.session_state.nodes,solved()),{}
         edit=network_editor(st.session_state.nodes, st.session_state.edges, solved(), key='network-v14', height=_edh,
                             status=status, status_message=status_msg, selected=st.session_state.get('selected'),
-                            palette=feature_palette(), labels=_nlab, edge_labels=_elab, edge_widths=_ew)
+                            palette=feature_palette(), labels=_nlab, edge_labels=_elab, edge_widths=_ew, epoch=st.session_state.get('canvas_epoch',0))
         # One contract (ui/graph_contract.py): only a new canvas revision is an edit; stale replays are ignored.
-        if accept_canvas_payload(st.session_state, edit)=='graph': st.rerun()
+        if accept_canvas_payload(st.session_state, edit)=='graph': st.session_state['_applied_note']='Canvas changes applied to the model.'; st.rerun()
+        if st.session_state.pop('_blank_msg',False): apply_notice(st,'Blank page ready - add components from the palette (canvas or sidebar).','applied')
+        if st.session_state.get('_applied_note'): apply_notice(st,st.session_state.pop('_applied_note')+' Solve again to refresh the results.','applied')
         for msg in st.session_state.pop('graph_issues',[]) or []: st.warning(msg)
         if st.session_state.pop('solve_request',False):
             # The editor above has already been sent with the SOLVING badge.
@@ -249,16 +274,21 @@ with tab_net:
         st.markdown(f"**Model state:** {badge} {status}" + (f" — {status_msg}" if status_msg else ''))
         selected=st.session_state.get('selected')
         issues=validate_topology(st.session_state.nodes,st.session_state.edges)
-        ca,cb=st.columns(2)
+        ca,cb,cc=st.columns([1,1,1])
         if ca.button('Auto-layout network',use_container_width=True):
-            st.session_state.nodes=auto_layout(st.session_state.nodes,st.session_state.edges); st.rerun()
-        cb.metric('Topology issues',len(issues))
+            st.session_state.nodes=auto_layout(st.session_state.nodes,st.session_state.edges); bump_canvas(); st.rerun()
+        with cb: blank_page_control(st,'net')
+        cc.metric('Topology issues',len(issues))
+        if not st.session_state.nodes: st.info('The layout is empty. Add equipment from the canvas palette (left of the canvas) or the sidebar, connect OUT → IN, then press **Apply** above the canvas.')
         if issues:
             with st.expander('Topology validation',expanded=any(i['severity']=='error' for i in issues)):
                 for i in issues: st.write(('🔴' if i['severity']=='error' else '🟠'),i['message'])
         st.caption('Canvas: add equipment from its palette, drag nodes, select objects, create links by clicking OUT then IN, delete/copy, undo/redo. Every edit is synchronised into the Python case model.')
-    with props:
-        _pre_edit=_model_fingerprint(st.session_state.nodes,st.session_state.edges)
+    st.session_state["_applied_fp"]=_model_fingerprint(st.session_state.nodes,st.session_state.edges)
+    # The property panel is a fragment: editing a value reruns only the panel (fast). The Apply button below it redraws the whole app.
+    @st.fragment
+    def _props_panel():
+        selected=st.session_state.get('selected'); _bar=st.empty()
         ids=[n['id'] for n in st.session_state.nodes]; edge_ids=[e['id'] for e in st.session_state.edges]
         comm_ids=[f"comm:{n['id']}>{c['to']}" for n in st.session_state.nodes if n.get('kind')=='reservoir' for c in (n.get('params') or {}).get('communication') or []]
         pick_opts=ids+edge_ids+comm_ids
@@ -284,6 +314,8 @@ with tab_net:
             st.subheader('Selected connection')
             set_edge_kind(e,synced_select(st,'Type',LINK_TYPES,e.get('kind','pipeline'),'ek'+eid))
             ep=e.setdefault('params',{})
+            if synced_checkbox(st,'🚫 Mask this connection (kept on the layout, ignored by every calculation)',bool(ep.get('masked')),'emsk'+eid): ep['masked']=True
+            else: ep.pop('masked',None)
             if e['kind']=='pipeline':
                 e['length_m']=unit_input(f"Length [{ul['length']}]",float(clean_num(e.get('length_m'),0.0)),length_to_display,length_from_display,'el'+eid,0.0,1e7)
                 e['diameter_m']=unit_input(f"ID [{ul['diameter']}]",float(clean_num(e.get('diameter_m'),.154)),diameter_to_display,diameter_from_display,'ed'+eid,0.001,5.0,fmt='%.4f')
@@ -310,6 +342,8 @@ with tab_net:
             _sc=synced_slider(st,'Symbol size on the layout (× normal; also canvas Size −/+)',0.4,3.0,float(clean_num(p.get('scale'),1.0)),'scl'+sid)
             if abs(float(_sc)-1.0)<0.02: p.pop('scale',None)
             else: p['scale']=round(float(_sc),2)
+            if synced_checkbox(st,'🚫 Mask (kept on the layout, ignored by every calculation)',bool(p.get('masked')),'msk'+sid): p['masked']=True
+            else: p.pop('masked',None)
             if n['kind'] in ('well','water_injector','gas_injector','injector'):
                 if role_phase_editor(st,n): st.rerun()
             if n['kind']=='joint':
@@ -324,8 +358,14 @@ with tab_net:
                 if n['kind'] in ('separator','separator_stage'): separator_type_editor(st,n)
                 if n['kind'] not in ('water_source','gas_source'): constraint_editor(st,n,None,n['kind'],sid,title='Handling capacities & limits',expanded=True)
             if n['kind']=='reservoir':
-                PH={'oil':'Oil (black oil)','gas':'Dry gas','gas_condensate':'Gas condensate'}
-                p['fluid_phase']=synced_select(st,'Fluid phase',list(PH),p.get('fluid_phase','oil') if p.get('fluid_phase') in PH else 'oil','rph'+sid,format_func=PH.get)
+                PH={'oil':'Oil','oil_gascap':'Oil with gas cap','gas':'Dry gas','gas_condensate':'Gas condensate'}
+                _cur='oil_gascap' if (p.get('fluid_phase','oil')=='oil' and float(clean_num(p.get('gas_cap_m'),0.0))>0) else (p.get('fluid_phase','oil') if p.get('fluid_phase') in PH else 'oil')
+                _ph=synced_select(st,'Fluid in the tank',list(PH),_cur,'rph'+sid,format_func=PH.get)
+                p['fluid_phase']='oil' if _ph=='oil_gascap' else _ph
+                if _ph=='oil_gascap':
+                    p['gas_cap_m']=synced_number(st,'Gas-cap size m = gas-cap volume / oil volume at initial conditions [-]',float(clean_num(p.get('gas_cap_m'),0.0)) or 0.5,'rgcm'+sid,0.01,10.0,fmt='%.2f')
+                    st.caption('The cap expands as the tank is produced and supports the pressure (m = 0.5 means the cap is half the size of the oil zone). Free-gas production from the cap is not tracked separately.')
+                else: p.pop('gas_cap_m',None)
                 if p['fluid_phase']=='oil':
                     v=synced_number(st,'STOIIP — oil in place [MSm³]',float(clean_num(p.get('stoiip_sm3'),TANK_DEFAULTS['stoiip_sm3']))/1e6,'rst'+sid,0.001,1e6,fmt='%.3f'); p['stoiip_sm3']=v*1e6
                 else:
@@ -356,7 +396,15 @@ with tab_net:
                 relperm_editor(st,n); communication_editor(st,n,st.session_state.nodes)
             if n['kind'] in ('water_injector','gas_injector'):
                 p['injectivity_m3d_bar']=synced_number(st,'Injectivity index [m³/d/bar]',float(clean_num(p.get('injectivity_m3d_bar'),10.0)),'ii'+sid,0.0,1e5)
-                p['reservoir_pressure_bar']=unit_input(f"Reservoir pressure [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),200.0)),pressure_to_display,pressure_from_display,'ipr'+sid,1.,1500.)
+                tanks_i={t['id']:t['name'] for t in st.session_state.nodes if t.get('kind')=='reservoir'}
+                if tanks_i:
+                    cur_i=p.get('reservoir_id') if p.get('reservoir_id') in tanks_i else ''
+                    sel_i=synced_select(st,'Supports reservoir tank',['']+list(tanks_i),cur_i,'irid'+sid,format_func=lambda k: tanks_i.get(k,'— none (own reservoir pressure) —'))
+                    if sel_i: p['reservoir_id']=sel_i
+                    else: p.pop('reservoir_id',None)
+                _tki=next((t for t in st.session_state.nodes if t['id']==p.get('reservoir_id') and t.get('kind')=='reservoir'),None)
+                if _tki is not None: st.caption(f"Reservoir pressure: taken from tank **{_tki['name']}** ({pressure_to_display(float(clean_num((_tki.get('params') or {}).get('reservoir_pressure_bar'),250.0)),PROFILE):,.1f} {ul['pressure']}, initial) - edit it on the tank, it is the only pressure input.")
+                else: p['reservoir_pressure_bar']=unit_input(f"Reservoir pressure (no tank assigned) [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),200.0)),pressure_to_display,pressure_from_display,'ipr'+sid,1.,1500.)
                 p['depth_m']=unit_input(f"TVD [{ul['length']}]",float(clean_num(p.get('depth_m'),2000.0)),length_to_display,length_from_display,'idp'+sid,0.,10000.)
                 constraint_editor(st,n,None,n['kind'],sid,title='Constraints (this injector)')
                 p['available']=synced_checkbox(st,'Injector available',p.get('available',True) not in (False,'false','False',0),'iav'+sid)
@@ -374,10 +422,18 @@ with tab_net:
                     sel=synced_select(st,'Drains reservoir tank',['']+list(tanks_),cur,'rid'+sid,format_func=lambda k: tanks_.get(k,'— none (own reservoir pressure) —'))
                     if sel: p['reservoir_id']=sel
                     else: p.pop('reservoir_id',None)
-                if p.get('reservoir_id') in tanks_: st.caption('Reservoir pressure comes from the tank (material balance); the value below is only used without a tank.')
-                p['reservoir_pressure_bar']=unit_input(f"Reservoir pressure [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),200)),pressure_to_display,pressure_from_display,'pr'+sid,1.,1500.)
+                _tk=next((t for t in st.session_state.nodes if t['id']==p.get('reservoir_id') and t.get('kind')=='reservoir'),None)
+                if _tk is not None: st.caption(f"Reservoir pressure: taken from tank **{_tk['name']}** ({pressure_to_display(float(clean_num((_tk.get('params') or {}).get('reservoir_pressure_bar'),250.0)),PROFILE):,.1f} {ul['pressure']}, initial) - edit it on the tank, it is the only pressure input.")
+                else: p['reservoir_pressure_bar']=unit_input(f"Reservoir pressure (no tank assigned) [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),200)),pressure_to_display,pressure_from_display,'pr'+sid,1.,1500.)
                 p['ipr_model']=synced_select(st,'IPR',['PI','Vogel','Gas'],p.get('ipr_model','PI') if p.get('ipr_model','PI') in ('PI','Vogel','Gas') else 'PI','im'+sid,format_func={'PI':'Productivity index (oil)','Vogel':'Vogel (solution gas)','Gas':'Gas backpressure'}.get)
-                if p['ipr_model']=='Gas':
+                _dar=synced_checkbox(st,'Compute the inflow from reservoir properties (Darcy: vertical / deviated / horizontal, layers)',p.get('darcy') in (True,'true','True',1),'dcon'+sid)
+                if _dar:
+                    p['darcy']=True
+                    from ui.darcy_view import darcy_editor
+                    darcy_editor(st,p,sid,lambda lab,val,key,lo,hi: unit_input(f"{lab} [{ul['length']}]",val,length_to_display,length_from_display,key,lo,hi),lambda v: pi_to_display(v,PROFILE),'m³/d/bar' if PROFILE=='norwegian_si' else 'stb/d/psi',p['ipr_model']=='Gas')
+                else: p.pop('darcy',None)
+                if _dar: pass
+                elif p['ipr_model']=='Gas':
                     p['gas_c_sm3d_bar2n']=synced_number(st,'Backpressure C [Sm³/d/bar²ⁿ]',float(clean_num(p.get('gas_c_sm3d_bar2n'),50.0)),'gc'+sid,0.0001,1e7)
                     p['gas_n']=synced_number(st,'Backpressure exponent n [-]',float(clean_num(p.get('gas_n'),1.0)),'gn'+sid,0.5,1.0)
                 elif p['ipr_model']=='PI': p['pi_m3d_bar']=unit_input('PI [m³/d/bar]' if PROFILE=='norwegian_si' else 'PI [stb/d/psi]',float(clean_num(p.get('pi_m3d_bar'),10)),pi_to_display,pi_from_display,'pi'+sid,0.001,10000.)
@@ -391,7 +447,7 @@ with tab_net:
                         if _v>0: p[_k]=_v
                         else: p.pop(_k,None)
                 p['skin']=synced_number(st,'Completion skin [-]',float(clean_num(p.get('skin'),0.0)),'sk'+sid,-6.0,100.0)
-                st.caption(f"PI multiplier from skin: {well_settings(p)['pi']/max(float(clean_num(p.get('pi_m3d_bar'),10)),1e-9):.2f} (J = J₀·C/(C+S), C = {float(clean_num(p.get('skin_reference_factor'),7.0)):.1f})")
+                if not p.get('darcy'): st.caption(f"PI multiplier from skin: {well_settings(p)['pi']/max(float(clean_num(p.get('pi_m3d_bar'),10)),1e-9):.2f} (J = J₀·C/(C+S), C = {float(clean_num(p.get('skin_reference_factor'),7.0)):.1f})")
                 correlation_select(st,p,'vm'+sid,'tubing',param_key='vlp_model',label='Tubing VLP correlation'); p['correlation']=p['vlp_model']
                 p['lift_type']=synced_select(st,'Artificial lift',['none','ESP','gas_lift'],p.get('lift_type','none') if p.get('lift_type','none') in ('none','ESP','gas_lift') else 'none','lt'+sid)
                 if p['lift_type']=='gas_lift':
@@ -405,35 +461,43 @@ with tab_net:
                 constraint_editor(st,n,None,'well',sid,title='Constraints (this well)')
             if st.button('Delete selected node'):
                 st.session_state.nodes=[x for x in st.session_state.nodes if x['id']!=sid]; st.session_state.edges=[e for e in st.session_state.edges if e['source']!=sid and e['target']!=sid]; st.session_state.selected=None; st.rerun()
+        _fp=_model_fingerprint(st.session_state.nodes,st.session_state.edges); _base0=st.session_state.get('_applied_fp')
+        with _bar.container():
+            _dirty=_base0 is not None and _fp!=_base0
+            if _dirty: apply_notice(st,'Edits are stored in the model. Press <b>Apply changes</b> to redraw the canvas and refresh status and the other tabs.','pending')
+            style_button(st,'props_apply','pending' if _dirty else 'idle')
+            if st.button('Apply changes' if _dirty else 'No pending changes',key='props_apply',use_container_width=True,disabled=not _dirty): st.session_state['_applied_note']='Property changes applied.'; st.rerun()
+    with props: _props_panel()
     st.subheader('Flowlines / pipelines')
     if st.session_state.edges:
         rows=[]
         for e in st.session_state.edges: rows.append({**{k:e.get(k) for k in ['id','source','target','length_m','diameter_m','roughness_m','elevation_change_m']},**{k:(e.get('params',{}) or {}).get(k) for k in ['temperature_c','water_cut','gor_sm3sm3']}})
-        ed=st.data_editor(pd.DataFrame(rows),hide_index=True,use_container_width=True,disabled=['id','source','target'],key='flowline_table_'+str(abs(hash(json.dumps(rows,sort_keys=True,default=str))))) 
-        for row in ed.to_dict('records'):
-            e=next((x for x in st.session_state.edges if x['id']==row['id']),None)
-            if e is None: continue
-            for k in ['length_m','diameter_m','roughness_m','elevation_change_m']:
-                v=clean_num(row.get(k))
-                if v is not None: e[k]=v
-            for k in ['temperature_c','water_cut','gor_sm3sm3']:
-                v=clean_num(row.get(k))
-                if v is not None: e.setdefault('params',{})[k]=v
+        _fsig=str(abs(hash(json.dumps(rows,sort_keys=True,default=str))))
+        with st.form('flowline_form_'+_fsig,border=False):   # no server round trip per cell; Apply writes the table back
+            ed=st.data_editor(pd.DataFrame(rows),hide_index=True,use_container_width=True,disabled=['id','source','target'],key='flowline_table_'+_fsig)
+            _fl_go=st.form_submit_button('Apply flowline table',type='primary',use_container_width=True)
+        style_form_submit(st)
+        if _fl_go:
+            for row in ed.to_dict('records'):
+                e=next((x for x in st.session_state.edges if x['id']==row['id']),None)
+                if e is None: continue
+                for k in ['length_m','diameter_m','roughness_m','elevation_change_m']:
+                    v=clean_num(row.get(k))
+                    if v is not None: e[k]=v
+                for k in ['temperature_c','water_cut','gor_sm3sm3']:
+                    v=clean_num(row.get(k))
+                    if v is not None: e.setdefault('params',{})[k]=v
+            st.session_state['_applied_note']='Flowline table applied.'; st.rerun()
     def _load_project_doc(pj):
-        nn,ee=normalize_project(pj); nn,ee,gi=normalize_graph(nn,ee); st.session_state.nodes,st.session_state.edges=(auto_layout(nn,ee) if len({(n['x'],n['y']) for n in nn})<=1 else nn),ee; reset_solve(); st.session_state.graph_issues=gi; st.success('Project loaded'); st.rerun()
+        nn,ee=normalize_project(pj); nn,ee,gi=normalize_graph(nn,ee); st.session_state.nodes,st.session_state.edges=(auto_layout(nn,ee) if len({(n['x'],n['y']) for n in nn})<=1 else nn),ee; reset_solve(); st.session_state.graph_issues=gi; bump_canvas(); st.success('Project loaded'); st.rerun()
     render_data_tables(st,st.session_state.nodes,st.session_state.edges,solved(),st.session_state.get('forecast'),reset=reset_solve,on_project=_load_project_doc)
-    # The canvas and status badge are drawn before this panel; a panel edit must redraw them (type, name, status).
-    if _model_fingerprint(st.session_state.nodes,st.session_state.edges)!=_pre_edit:
-        st.session_state['_panel_reruns']=st.session_state.get('_panel_reruns',0)+1
-        if st.session_state['_panel_reruns']<=2: st.rerun()
-    else: st.session_state['_panel_reruns']=0
     c1,c2,c3=st.columns([1,1,1])
     payload=json.dumps(to_builtin({'version':'30','application':'FieldNet v30','storage_units':'canonical','display_unit_profile':PROFILE,'standard_conditions':STANDARD_CONDITIONS,'nodes':st.session_state.nodes,'edges':st.session_state.edges}),indent=2,default=str); c3.download_button('Export network SVG',network_svg(st.session_state.nodes,st.session_state.edges,_nlab,(solved() or ({},{},{},{}))[1],edge_labels=_elab,widths=_ew),'fieldnet_network.svg','image/svg+xml',use_container_width=True)
     c2.download_button('Export case JSON',payload,'fieldnet_case.json','application/json',use_container_width=True)
     uploaded=st.file_uploader('Load FieldNet project JSON',type=['json'],key='project_upload')
     if uploaded is not None and st.button('Load project',use_container_width=True):
         try:
-            nn,ee=normalize_project(json.load(uploaded)); nn,ee,gi=normalize_graph(nn,ee); st.session_state.nodes,st.session_state.edges=(auto_layout(nn,ee) if len({(n['x'],n['y']) for n in nn})<=1 else nn),ee; reset_solve(); st.session_state.graph_issues=gi; st.success('Project loaded'); st.rerun()
+            nn,ee=normalize_project(json.load(uploaded)); nn,ee,gi=normalize_graph(nn,ee); st.session_state.nodes,st.session_state.edges=(auto_layout(nn,ee) if len({(n['x'],n['y']) for n in nn})<=1 else nn),ee; reset_solve(); st.session_state.graph_issues=gi; bump_canvas(); st.success('Project loaded'); st.rerun()
         except Exception as exc: st.error(f'Invalid project: {exc}')
     r=solved()
     if r:
@@ -521,7 +585,7 @@ with tab_nodal:
     else: st.info('Add a well to run nodal analysis.')
 
 with tab_tanks:
-    st.subheader('Reservoir tanks')
+    st.subheader('Tanks')
     st.caption('Tanks hold the in-place volume and fluid phase. Drag a tank onto a well (or injector) in the editor to assign it; linked wells take the tank pressure, and the forecast depletes the tank by material balance.')
     ts=tank_summary(st.session_state.nodes)
     if ts:
@@ -529,7 +593,7 @@ with tab_tanks:
         unl=[w['name'] for w in st.session_state.nodes if w.get('kind')=='well' and not (w.get('params') or {}).get('reservoir_id')]
         if unl: st.warning('Producers without a tank (they use per-well decline in forecasts): '+', '.join(unl))
     else:
-        st.info('No reservoir tank yet. Add **Reservoir tank** from the editor palette, set its in-place volume and fluid phase in the property panel, then drag it onto the wells it drains.')
+        st.info('No reservoir tank yet. Add a **Tank** from the editor palette, set its in-place volume and fluid phase in the property panel, then drag it onto the wells it drains.')
 
 with tab_diag:
     pipes=[e for e in st.session_state.edges if e.get('kind','pipeline')=='pipeline']
@@ -736,7 +800,7 @@ with tab_rel:
         st.download_button('Download reliability JSON',json.dumps(to_builtin(rr),indent=2,default=str),'fieldnet_reliability.json','application/json',use_container_width=True)
 
 with tab_res25:
-    st.subheader('Reservoir tanks & coupling')
+    st.subheader('Tanks & coupling')
     st.caption('Everything is drawn on the network canvas: drag a tank onto a well/injector to assign what it drains, drag a tank onto another tank to let them communicate. This tab only summarises and fine-tunes that model; the Forecast tab runs it.')
     tank_df=tank_coupling_table(st.session_state.nodes,st.session_state.edges)
     if tank_df.empty: st.info('No reservoir tanks yet — add an Oil tank or Gas tank from the palette on the Network tab.')
@@ -831,13 +895,12 @@ with tab_res25:
 
 
 
-with tab_avail: st.info('Uptime and downtime moved to the **Network** tab → *Data tables* → Uptime, so every input is edited next to the layout.')
 
 with tab_pvt:
     render_pvt(st,st.session_state.nodes,st.session_state.edges,solved)
 
 
-with G[6]:
+with G[4]:
     _c_tpl,_c_cases,_c_data=st.tabs(['Templates & examples','Cases','Data hub, export & post-processing'])
     with _c_tpl: render_templates(st,reset=reset_solve,library=library(st),solved=solved)
     with _c_cases: render_cases(st,solved=solved,reset=reset_solve)
@@ -849,6 +912,14 @@ with tab_io27:
 
 
 with tab_qa28:
+    from network.input_check import check_inputs, summarize
+    st.subheader('Input & unit consistency')
+    st.caption('Live check of every input against its valid range, likely unit slips (inch/mm, psi/bar, %), pressure conflicts, tank links, Darcy inputs and scheduled events. Values are checked in model units (bar, m, m³/d, °C).')
+    _chk=check_inputs(st.session_state.nodes,st.session_state.edges,[ (x.to_dict() if hasattr(x,'to_dict') else (x if isinstance(x,dict) else vars(x))) for x in (st.session_state.get('schedule_events') or [])])
+    _cs=summarize(_chk); _a,_b,_c=st.columns(3); _a.metric('Errors',_cs['error']); _b.metric('Warnings',_cs['warning']); _c.metric('Notes',_cs['info'])
+    if _chk: st.dataframe(pd.DataFrame(_chk).rename(columns={'severity':'Severity','element':'Element','field':'Field','message':'Message'})[['Severity','Element','Field','Message']],hide_index=True,use_container_width=True)
+    else: st.success('No input problems found.')
+    st.divider()
     st.subheader('Engineering QA & model assurance')
     st.caption('Read-only assurance: definite invariant violations are errors; suspicious engineering values are warnings. No inputs are auto-corrected.')
     for rb in run_button(st,'Run Model Quality Report',key='rb_model_quality',type='primary',model_hash=graph_hash(st.session_state.nodes,st.session_state.edges)):

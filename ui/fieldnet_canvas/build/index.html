@@ -61,12 +61,16 @@ svg#edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z
 .pal-group:before{content:'▾ '}.pal-group.closed:before{content:'▸ '}
 .comm{stroke:#ffb74d;stroke-width:2.2;fill:none;stroke-dasharray:9 4;pointer-events:stroke;cursor:pointer}.comm.sel{stroke:#ffcc66;stroke-width:3.6}
 .palette{width:150px}
+.apply{font-weight:700;min-width:130px}.apply.idle{opacity:.55}.apply.pending{background:#e8710a!important;border-color:#b85a08!important;color:#fff!important;animation:pulse 1.2s infinite}.apply.done{background:#1b8a3a!important;border-color:#157030!important;color:#fff!important}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 #e8710a88}50%{box-shadow:0 0 0 6px #e8710a00}}
+.node.masked{opacity:.38;filter:grayscale(1)}.node.masked .nm:after{content:' · MASKED';font-size:9px;color:#ffb74d}
+svg .edge.masked{stroke-dasharray:3 6;opacity:.4}
 </style></head><body>
 <div class="toolbar">
   <b>FieldNet Editor</b><span id="badge" class="badge UNSOLVED">UNSOLVED</span>
   <span class="sep"></span>
   <button id="del" title="Delete selection (Del)">Delete</button><button id="copy" title="Duplicate node">Copy</button><button id="szm" title="Shrink the selected symbol">Size −</button><button id="szp" title="Enlarge the selected symbol">Size +</button>
-  <button id="undo" title="Undo (Ctrl+Z)">Undo</button><button id="redo" title="Redo (Ctrl+Y)">Redo</button><button id="layout" title="Arrange nodes left-to-right">Auto-layout</button>
+  <button id="undo" title="Undo (Ctrl+Z)">Undo</button><button id="redo" title="Redo (Ctrl+Y)">Redo</button><button id="layout" title="Arrange nodes left-to-right">Auto-layout</button><button id="mask" title="Mask / unmask the selection: it stays on the layout but is ignored by every calculation (like GAP)">Mask</button><button id="apply" class="apply idle" title="Edits on the canvas are staged until you press Apply">No pending changes</button>
   <span class="sp"></span>
   <button id="zout" title="Zoom out">−</button><span id="zoomLabel">100%</span><button id="zin" title="Zoom in">+</button>
   <button id="fit" title="Fit network in view">Fit</button><button id="svgx" title="Export the network as an SVG drawing">SVG</button><button id="reset" title="Reset view (100%, origin)">Reset</button>
@@ -76,7 +80,7 @@ svg#edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z
 <div id="vp"><canvas id="grid"></canvas><div id="world"><svg id="edges"></svg></div><div id="status" class="status">Ready</div><div id="msg" class="msg" style="display:none"></div></div></div>
 <script>
 const SCHEMA='fieldnet.graph/1';
-const TYPES=[['reservoir','Reservoir tank'],['well','Well'],['manifold','Manifold'],['separator','Separator'],['separator_stage','Separator stage'],['sink','Sink'],['oil_export','Oil export'],['gas_export','Gas export'],['water_disposal','Water disposal'],['water_source','Water source'],['gas_source','Gas source'],['water_injector','Water injector'],['gas_injector','Gas injector']];
+const TYPES=[['reservoir','Tank'],['well','Well'],['manifold','Manifold'],['separator','Separator'],['separator_stage','Separator stage'],['sink','Sink'],['oil_export','Oil export'],['gas_export','Gas export'],['water_disposal','Water disposal'],['water_source','Water source'],['gas_source','Gas source'],['water_injector','Water injector'],['gas_injector','Gas injector']];
 const COLORS={well:'#29b6f6',manifold:'#9fa8da',separator:'#66bb6a',separator_stage:'#66bb6a',sink:'#ef5350',oil_export:'#ef5350',gas_export:'#ef5350',water_disposal:'#ef5350',water_source:'#4dd0e1',gas_source:'#ffb74d',water_injector:'#4dd0e1',gas_injector:'#ffb74d',reservoir:'#8d6e63',joint:'#cfd8dc',choke:'#ba68c8',control_valve:'#ba68c8',pump:'#4db6ac',compressor:'#ffb74d'};
 const EQUIP=['choke','control_valve','pump','compressor'];
 const GLYPH={choke:'⧖',control_valve:'⋈',pump:'⟳',compressor:'⇶'};
@@ -98,7 +102,14 @@ const statusEl=document.getElementById('status'), msgEl=document.getElementById(
 const SVGNS='http://www.w3.org/2000/svg';
 
 /* ---------- Streamlit plumbing: only graph/selection edits are sent ---------- */
-function send(){rev+=1;parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:{schema:SCHEMA,rev:Date.now()+'-'+rev,nodes:state.nodes,edges:state.edges,selected}},'*')}
+/* Graph edits are staged locally (no Python rerun while drawing / moving / creating) and sent together with the Apply button.
+   Selection changes are sent at once (the property panel needs them) but carry no graph. */
+let dirty=0, epoch=null, touched=new Set(), deleted=new Set(), applyFlash=null;
+function sendSel(){rev+=1;parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:{schema:SCHEMA,rev:Date.now()+'-'+rev,selected}},'*')}
+function sendGraph(){rev+=1;parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:{schema:SCHEMA,rev:Date.now()+'-'+rev,nodes:state.nodes,edges:state.edges,selected}},'*')}
+function send(){dirty++;updApply()}
+function updApply(){const b=document.getElementById('apply');if(!b)return;if(dirty>0){b.className='apply pending';b.textContent='Apply '+dirty+' change'+(dirty>1?'s':'');b.title='Send the edits to the model (layout, results and the other tabs refresh)'}else if(applyFlash){b.className='apply done';b.textContent='✔ Applied';b.title='Edits sent to the model'}else{b.className='apply idle';b.textContent='No pending changes';b.title='Edits on the canvas are staged until you press Apply'}}
+function applyNow(){if(!dirty){return}sendGraph();dirty=0;touched.clear();deleted.clear();applyFlash=setTimeout(()=>{applyFlash=null;updApply()},3500);updApply();say('Changes applied')}
 function frame(h=860){parent.postMessage({isStreamlitMessage:true,type:'streamlit:setFrameHeight',height:h},'*')}
 function snap(){return JSON.stringify({nodes:state.nodes,edges:state.edges})}
 function checkpoint(){undo.push(snap());if(undo.length>60)undo.shift();redo=[];tools()}
@@ -124,7 +135,7 @@ window.addEventListener('resize',()=>applyView());
 function defaults(k,x,y){const n={id:uid(),kind:k,name:k.toUpperCase()+'-'+(state.nodes.length+1),pressure_bar:null,x,y,params:{}};
  if(k==='well')n.params={reservoir_pressure_bar:220,ipr_model:'PI',pi_m3d_bar:10,qmax_m3d:1500,initial_rate_m3d:500,depth_m:2000,tubing_id_m:.0889,tubing_roughness_m:4.5e-5,temperature_c:70,water_cut:.2,gor_sm3sm3:100,api:35,gas_sg:.75,vlp_model:'Beggs-Brill',available:true};
  if(['sink','separator','separator_stage','oil_export','gas_export','water_disposal'].includes(k))n.pressure_bar=35;if(k==='water_source'||k==='gas_source')n.pressure_bar=180;
- if(k==='reservoir')n.params={reservoir_pressure_bar:250,pore_volume_m3:2000000,total_compressibility_1bar:8e-5,min_pressure_bar:20};
+ if(k==='reservoir')n.params={fluid_phase:'oil',reservoir_pressure_bar:250,pore_volume_m3:2000000,total_compressibility_1bar:8e-5,min_pressure_bar:20};
  if(k==='gas_injector')n.params={injection_fluid:'gas',injectivity_m3d_bar:10,reservoir_pressure_bar:200,depth_m:2000,available:true};
  if(k==='water_injector')n.params={injection_fluid:'water',injectivity_m3d_bar:10,reservoir_pressure_bar:200,depth_m:2000,available:true};return n}
 function edgeDefault(a,b){return {id:uid(),source:a,target:b,kind:'pipeline',length_m:1000,diameter_m:.154,roughness_m:4.5e-5,elevation_change_m:0,params:{temperature_c:50,water_cut:.2,gor_sm3sm3:100,api:35,gas_sg:.75,initial_rate_m3d:500,correlation:'Beggs-Brill',cv:80,shutoff_head_bar:35,rated_rate_m3d:1500,efficiency:.75,pressure_ratio:1.8,max_discharge_bar:250,opening:1,speed_fraction:1,map_enabled:false,rated_gas_rate_sm3d:150000}}}
@@ -147,15 +158,15 @@ function solvedView(){return state.status==='SOLVED'||state.status==='FAILED'}
 function render(){
  world.querySelectorAll('.node').forEach(x=>x.remove());for(const k in els)delete els[k];
  state.nodes.forEach((n,i)=>{if(!isFinite(+n.x)||!isFinite(+n.y)){n.x=60+(i%4)*200;n.y=60+Math.floor(i/4)*120}
-  const e=document.createElement('div');e.className='node'+(selected===n.id?' sel':'')+(n.kind==='joint'?' joint':'')+(EQUIP.includes(n.kind)?' equip':'')+(SHAPES[n.kind]?' shaped '+n.kind:'');e.style.left=(+n.x)+'px';e.style.top=(+n.y)+'px';e.dataset.id=n.id;{const sc=nscale(n);if(sc!==1){e.style.transformOrigin='0 0';e.style.transform='scale('+sc+')'}}
+  const e=document.createElement('div');e.className='node'+((n.params||{}).masked?' masked':'')+(selected===n.id?' sel':'')+(n.kind==='joint'?' joint':'')+(EQUIP.includes(n.kind)?' equip':'')+(SHAPES[n.kind]?' shaped '+n.kind:'');e.style.left=(+n.x)+'px';e.style.top=(+n.y)+'px';e.dataset.id=n.id;{const sc=nscale(n);if(sc!==1){e.style.transformOrigin='0 0';e.style.transform='scale('+sc+')'}}
   const pv=state.p[n.id];let res=(solvedView()&&pv!=null)?Number(pv).toFixed(1)+' bar':'unsolved';
-  if(n.kind==='reservoir'){const pp=n.params||{};const ph={oil:'oil',gas:'gas',gas_condensate:'condensate'}[pp.fluid_phase||'oil']||'oil';const inpl=ph==='oil'?((+pp.stoiip_sm3||0)/1e6).toFixed(1)+' MSm³':((+pp.giip_sm3||0)/1e9).toFixed(2)+' GSm³';res=ph+' · '+inpl+' · '+Math.round(+pp.reservoir_pressure_bar||0)+' bar'}
+  if(n.kind==='reservoir'){const pp=n.params||{};const ph0={oil:'oil',gas:'gas',gas_condensate:'condensate'}[pp.fluid_phase||'oil']||'oil';const ph=ph0==='oil'&&(+pp.gas_cap_m>0)?'oil+cap':ph0;const inpl=ph0==='oil'?((+pp.stoiip_sm3||0)/1e6).toFixed(1)+' MSm³':((+pp.giip_sm3||0)/1e9).toFixed(2)+' GSm³';res=ph+' · '+inpl+' · '+Math.round(+pp.reservoir_pressure_bar||0)+' bar'}
   const lab=(state.labels||{})[n.id];if(lab)res=lab;
   const pp0=n.params||{};let tag='';if(n.kind==='well'||n.kind==='water_injector'||n.kind==='gas_injector'){tag=((pp0.role||(n.kind==='well'?'producer':'injector'))+' · '+(pp0.phase||(n.kind==='gas_injector'?'gas':n.kind==='water_injector'?'water':(pp0.ipr_model==='Gas'?'gas':'oil'))))}else if(n.kind==='separator'||n.kind==='separator_stage'){tag=(pp0.separator_type||'two_phase').replace('_',' ')}
   const pfill=(()=>{const ph=SHAPES[n.kind]?nodePhase(n):null;if(!ph)return {defs:'',fill:''};const c=PHASE_COLOR[ph],wf=ph==='water'?0:waterFrac(n);if(wf<0.01)return {defs:'',fill:c};const id='pf'+i;return {defs:`<defs><linearGradient id="${id}" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="${PHASE_COLOR.water}"/><stop offset="${wf}" stop-color="${PHASE_COLOR.water}"/><stop offset="${wf}" stop-color="${c}"/><stop offset="1" stop-color="${c}"/></linearGradient></defs>`,fill:`url(#${id})`}})();
   const ports='<span class="port pin" data-port="in" title="IN — drop a connection here"></span><span class="port pout" data-port="out" title="OUT — drag to another component\'s IN port"></span>';
   if(n.kind==='joint')e.innerHTML=`${ports}<div class="jn">${n.name}</div>`;
-  else e.innerHTML=(SHAPES[n.kind]?`<svg class="shp" viewBox="0 0 100 100" preserveAspectRatio="none">${pfill.defs}<path d="${SHAPES[n.kind]}" style="stroke:${COLORS[n.kind]||'#9aa5b1'};${pfill.fill?'fill:'+pfill.fill+';fill-opacity:.9':''}"${SHAPE_DASHED.includes(n.kind)?' stroke-dasharray="6 4"':''}/>${SHAPE_DETAIL[n.kind]?`<path class="det" d="${SHAPE_DETAIL[n.kind]}" style="stroke:${COLORS[n.kind]||'#9aa5b1'}"/>`:''}</svg>`:'')+`<span class="stripe" style="background:${COLORS[n.kind]||'#9aa5b1'}"></span><div class=kind>${EQUIP.includes(n.kind)?GLYPH[n.kind]+' ':''}${n.kind.replace('_',' ')}</div><div class=nm title="${n.name}">${n.name}</div>${tag?'<div class="tag">'+tag+'</div>':''}${ports}<div class="result ${res==='unsolved'?'stale':''}" style="${n.kind==='reservoir'?'color:#d7b8a8':''}">${res}</div>`;
+  else e.innerHTML=(SHAPES[n.kind]?`<svg class="shp" viewBox="0 0 100 100" preserveAspectRatio="none">${pfill.defs}<path d="${SHAPES[n.kind]}" style="stroke:${COLORS[n.kind]||'#9aa5b1'};${pfill.fill?'fill:'+pfill.fill+';fill-opacity:.9':''}"${SHAPE_DASHED.includes(n.kind)?' stroke-dasharray="6 4"':''}/>${SHAPE_DETAIL[n.kind]?`<path class="det" d="${SHAPE_DETAIL[n.kind]}" style="stroke:${COLORS[n.kind]||'#9aa5b1'}"/>`:''}</svg>`:'')+`<span class="stripe" style="background:${COLORS[n.kind]||'#9aa5b1'}"></span><div class=kind>${EQUIP.includes(n.kind)?GLYPH[n.kind]+' ':''}${n.kind==='reservoir'?'tank':n.kind.replace('_',' ')}</div><div class=nm title="${n.name}">${n.name}</div>${tag?'<div class="tag">'+tag+'</div>':''}${ports}<div class="result ${res==='unsolved'?'stale':''}" style="${n.kind==='reservoir'?'color:#d7b8a8':''}">${res}</div>`;
   world.appendChild(e);els[n.id]=e});
  draw();tools();
 }
@@ -172,7 +183,7 @@ function draw(){
   const t=document.createElementNS(SVGNS,'text');const mp=pth.getPointAtLength(pth.getTotalLength()/2);t.setAttribute('x',mp.x);t.setAttribute('y',mp.y-7);t.setAttribute('text-anchor','middle');t.setAttribute('class','edgeText');t.textContent='communication T='+(+c.transmissibility_m3d_bar||0);svg.appendChild(t)})});
  state.edges.forEach(ed=>{const a=portPos(ed.source,'out'),b=portPos(ed.target,'in');if(!a||!b)return;const d=curve(a,b);
   const hit=document.createElementNS(SVGNS,'path');hit.setAttribute('d',d);hit.setAttribute('class','hit');hit.dataset.edge=ed.id;svg.appendChild(hit);
-  const q=state.q[ed.id];const p=document.createElementNS(SVGNS,'path');p.setAttribute('d',d);p.setAttribute('class','edge'+(selected===ed.id?' sel':'')+(solvedView()&&q!=null&&Math.abs(q)<1e-6?' zero':''));p.setAttribute('marker-end','url(#arr)');p.dataset.edge=ed.id;if(solvedView()&&state.ew&&state.ew[ed.id]&&selected!==ed.id)p.style.strokeWidth=state.ew[ed.id];svg.appendChild(p);
+  const q=state.q[ed.id];const p=document.createElementNS(SVGNS,'path');p.setAttribute('d',d);p.setAttribute('class','edge'+((ed.params||{}).masked?' masked':'')+(selected===ed.id?' sel':'')+(solvedView()&&q!=null&&Math.abs(q)<1e-6?' zero':''));p.setAttribute('marker-end','url(#arr)');p.dataset.edge=ed.id;if(solvedView()&&state.ew&&state.ew[ed.id]&&selected!==ed.id)p.style.strokeWidth=state.ew[ed.id];svg.appendChild(p);
   const mpt=p.getTotalLength?p.getPointAtLength(p.getTotalLength()/2):{x:(a.x+b.x)/2,y:(a.y+b.y)/2};const t=document.createElementNS(SVGNS,'text');t.setAttribute('x',mpt.x);t.setAttribute('y',mpt.y-7);t.setAttribute('text-anchor','middle');t.setAttribute('class','edgeText');t.textContent=(solvedView()&&state.elabels&&state.elabels[ed.id])||(ed.kind+((solvedView()&&q!=null)?' • '+Number(q).toFixed(0)+' m³/d':''));svg.appendChild(t)});
  if(mode&&mode.type==='connect'&&mode.cur){const a=portPos(mode.from,'out');const l=document.createElementNS(SVGNS,'path');l.setAttribute('d',curve(a,mode.cur));l.setAttribute('class','live');svg.appendChild(l)}
 }
@@ -186,7 +197,7 @@ vp.addEventListener('pointerdown',ev=>{
  if(ev.button!==0)return;const t=ev.target;const nodeEl=t.closest&&t.closest('.node');
  if(t.dataset&&t.dataset.port==='out'&&nodeEl){ // start a connection drag
   mode={type:'connect',from:nodeEl.dataset.id,cur:toWorld(ev.clientX,ev.clientY),target:null};vp.classList.add('connecting');vp.setPointerCapture(ev.pointerId);say('Drop on the target IN port');draw();ev.preventDefault();return}
- if(t.dataset&&t.dataset.edge){selected=t.dataset.edge;render();send();return}
+ if(t.dataset&&t.dataset.edge){selected=t.dataset.edge;render();sendSel();return}
  if(nodeEl&&!(t.dataset&&t.dataset.port)){const n=nodeById(nodeEl.dataset.id);mode={type:'drag',id:n.id,sx:ev.clientX,sy:ev.clientY,ox:+n.x,oy:+n.y,moved:false,snap:snap()};vp.setPointerCapture(ev.pointerId);return}
  if(!nodeEl){mode={type:'pan',sx:ev.clientX,sy:ev.clientY,tx:view.tx,ty:view.ty,moved:false};vp.classList.add('panning');vp.setPointerCapture(ev.pointerId)}
 });
@@ -200,8 +211,8 @@ vp.addEventListener('pointermove',ev=>{
 });
 function endPointer(ev){
  if(!mode)return;const m=mode;mode=null;vp.classList.remove('panning','connecting');clearTargets();
- if(m.type==='pan'){if(!m.moved&&selected){selected=null;render();send()}}
- else if(m.type==='drag'){if(m.moved){send();say('Moved')}else{selected=m.id;render();send()}}
+ if(m.type==='pan'){if(!m.moved&&selected){selected=null;render();sendSel()}}
+ else if(m.type==='drag'){if(m.moved){send();say('Moved - press Apply to commit')}else{selected=m.id;render();sendSel()}}
  else if(m.type==='connect'){const tid=nodeUnder(ev.clientX,ev.clientY)||m.target;const prob=connectionProblem(m.from,tid);
   if(!prob&&isComm(m.from,tid)){checkpoint();const A=nodeById(m.from);A.params=A.params||{};(A.params.communication=A.params.communication||[]).push({to:tid,transmissibility_m3d_bar:100,max_transfer_m3d:null});selected='comm:'+m.from+'>'+tid;render();send();say('Tanks '+A.name+' ⇄ '+nodeById(tid).name+' now communicate')}
   else if(!prob&&isDrain(m.from,tid)){checkpoint();const w=nodeById(tid);w.params=w.params||{};w.params.reservoir_id=m.from;selected=tid;render();send();say(w.name+' now drains '+nodeById(m.from).name)}
@@ -212,7 +223,7 @@ function flushPending(){if(pending){const a=pending;pending=null;applyArgs(a)}}
 vp.addEventListener('pointerup',endPointer);vp.addEventListener('pointercancel',endPointer);
 
 /* ---------- toolbar edits (these change the graph and are sent) ---------- */
-function deleteSelection(){if(!selected)return;checkpoint();if(String(selected).startsWith('comm:')){const [A,B]=selected.slice(5).split('>');const n=nodeById(A);if(n&&n.params&&n.params.communication){n.params.communication=n.params.communication.filter(c=>c.to!==B);if(!n.params.communication.length)delete n.params.communication}selected=null;render();send();say('Communication link removed');return}if(String(selected).startsWith('drain:')){const w=nodeById(selected.slice(6));if(w&&w.params)delete w.params.reservoir_id;selected=null;render();send();say('Drainage link removed');return}if(nodeById(selected)){state.nodes=state.nodes.filter(n=>n.id!==selected);state.edges=state.edges.filter(e=>e.source!==selected&&e.target!==selected)}else state.edges=state.edges.filter(e=>e.id!==selected);selected=null;render();send();say('Deleted')}
+function deleteSelection(){if(!selected)return;checkpoint();if(String(selected).startsWith('comm:')){const [A,B]=selected.slice(5).split('>');const n=nodeById(A);if(n&&n.params&&n.params.communication){n.params.communication=n.params.communication.filter(c=>c.to!==B);if(!n.params.communication.length)delete n.params.communication}selected=null;render();send();say('Communication link removed');return}if(String(selected).startsWith('drain:')){const w=nodeById(selected.slice(6));if(w&&w.params)delete w.params.reservoir_id;selected=null;render();send();say('Drainage link removed');return}if(nodeById(selected)){deleted.add(selected);state.nodes=state.nodes.filter(n=>n.id!==selected);state.edges=state.edges.filter(e=>e.source!==selected&&e.target!==selected)}else state.edges=state.edges.filter(e=>e.id!==selected);selected=null;render();send();say('Deleted')}
 function exportSVG(){const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;state.nodes.forEach(n=>{const e=els[n.id];const w=(e?e.offsetWidth:NODE_W)*nscale(n),h=(e?e.offsetHeight:74)*nscale(n);x0=Math.min(x0,+n.x);y0=Math.min(y0,+n.y);x1=Math.max(x1,+n.x+w+120);y1=Math.max(y1,+n.y+h)});if(!state.nodes.length){say('Nothing to export');return}
  const pad=30;x0-=pad;y0-=pad;x1+=pad;y1+=pad;let o=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x0} ${y0} ${x1-x0} ${y1-y0}" width="${x1-x0}" height="${y1-y0}" font-family="Segoe UI,Arial,sans-serif"><rect x="${x0}" y="${y0}" width="${x1-x0}" height="${y1-y0}" fill="#ffffff"/><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#456"/></marker></defs>`;
@@ -225,17 +236,28 @@ function exportSVG(){const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','
   o+=`<rect x="${n.x}" y="${n.y}" width="${w}" height="${h}" rx="9" fill="#f7f9fb" stroke="#455a64" stroke-width="1.3"/><rect x="${n.x}" y="${n.y}" width="5" height="${h}" rx="2" fill="${c}"/><text x="${+n.x+12}" y="${+n.y+17}" font-size="8" fill="#667" letter-spacing=".6">${esc(n.kind.replace('_',' ').toUpperCase())}</text><text x="${+n.x+12}" y="${+n.y+34}" font-size="12" font-weight="600" fill="#123">${esc(n.name)}</text><text x="${+n.x+12}" y="${+n.y+h-10}" font-size="10" fill="#046">${esc(lab)}</text><circle cx="${n.x}" cy="${+n.y+(portPos(n.id,'in').y-n.y)}" r="5" fill="#fff" stroke="#456"/><circle cx="${+n.x+w}" cy="${+n.y+(portPos(n.id,'out').y-n.y)}" r="5" fill="#fff" stroke="#456"/>`});
  o+='</svg>';const blob=new Blob([o],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const l=document.createElement('a');l.href=url;l.download='fieldnet_network.svg';document.body.appendChild(l);l.click();setTimeout(()=>{URL.revokeObjectURL(url);l.remove()},500);say('SVG exported')}
 document.getElementById('svgx').onclick=exportSVG;
+document.getElementById('apply').onclick=applyNow;
+document.getElementById('mask').onclick=()=>{const el=nodeById(selected)||state.edges.find(e=>e.id===selected);if(!el){say('Select a component or a connection first');return}checkpoint();el.params=el.params||{};touched.add(el.id);if(el.params.masked)delete el.params.masked;else el.params.masked=true;render();send();say((el.name||el.id)+(el.params.masked?' masked - ignored by calculations':' unmasked'))};
 document.getElementById('del').onclick=deleteSelection;
 document.getElementById('copy').onclick=()=>{const n=nodeById(selected);if(!n)return;checkpoint();const z=JSON.parse(JSON.stringify(n));z.id=uid();z.name+=' COPY';z.x=(+z.x||0)+35;z.y=(+z.y||0)+35;state.nodes.push(z);selected=z.id;render();send()};
 document.getElementById('undo').onclick=()=>{if(!undo.length)return;redo.push(snap());restore(undo.pop())};
 document.getElementById('redo').onclick=()=>{if(!redo.length)return;undo.push(snap());restore(redo.pop())};
-function resize(f){const n=nodeById(selected);if(!n){say('Select a component first');return}checkpoint();n.params=n.params||{};const v=Math.min(Math.max(nscale(n)*f,0.4),3);if(Math.abs(v-1)<0.02)delete n.params.scale;else n.params.scale=Math.round(v*100)/100;render();send();say(n.name+' size '+Math.round(v*100)+'%')}
+function resize(f){const n=nodeById(selected);if(!n){say('Select a component first');return}checkpoint();n.params=n.params||{};touched.add(n.id);const v=Math.min(Math.max(nscale(n)*f,0.4),3);if(Math.abs(v-1)<0.02)delete n.params.scale;else n.params.scale=Math.round(v*100)/100;render();send();say(n.name+' size '+Math.round(v*100)+'%')}
 document.getElementById('szm').onclick=()=>resize(1/1.2);document.getElementById('szp').onclick=()=>resize(1.2);
 document.getElementById('layout').onclick=()=>{checkpoint();const indeg={},adj={};state.nodes.forEach(n=>{indeg[n.id]=0;adj[n.id]=[]});state.edges.forEach(e=>{if(e.target in indeg&&e.source in adj){indeg[e.target]++;adj[e.source].push(e.target)}});const lvl={};const q=state.nodes.filter(n=>!indeg[n.id]).map(n=>n.id);q.forEach(i=>lvl[i]=0);while(q.length){const u=q.shift();adj[u].forEach(v=>{lvl[v]=Math.max(lvl[v]||0,lvl[u]+1);if(--indeg[v]===0)q.push(v)})}const cnt={};state.nodes.forEach(n=>{const l=lvl[n.id]||0;cnt[l]=(cnt[l]||0);n.x=40+l*240;n.y=40+cnt[l]*120;cnt[l]++});render();fit();send()};
 window.addEventListener('keydown',ev=>{if((ev.key==='Delete'||ev.key==='Backspace')&&selected){ev.preventDefault();deleteSelection()}else if(ev.key==='Escape'&&mode&&mode.type==='connect'){mode=null;vp.classList.remove('connecting');clearTargets();draw();say('Connection cancelled');flushPending()}else if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'){document.getElementById('undo').click()}else if((ev.ctrlKey||ev.metaKey)&&ev.key==='y'){document.getElementById('redo').click()}});
 
 /* ---------- args from Python (graph + solve state) ---------- */
-function applyArgs(a){pending=null;state.labels=a.labels||{};state.elabels=a.edge_labels||{};state.ew=a.edge_widths||{};if(a.palette&&a.palette.length){const sg=JSON.stringify(a.palette);if(sg!==palSig){palSig=sg;palGroups=a.palette;buildPalette()}}
+function rebase(a){ // Python changed while edits are staged: take its parameters, keep the staged layout / structure
+ const inc=new Map((a.nodes||[]).map(n=>[n.id,n])),ince=new Map((a.edges||[]).map(e=>[e.id,e]));
+ state.nodes.forEach(n=>{const i=inc.get(n.id);if(i&&!touched.has(n.id)){n.params=JSON.parse(JSON.stringify(i.params||{}));n.name=i.name;n.kind=i.kind;n.pressure_bar=i.pressure_bar}});
+ state.edges.forEach(e=>{const i=ince.get(e.id);if(i&&!touched.has(e.id)){const keep={source:e.source,target:e.target};Object.assign(e,JSON.parse(JSON.stringify(i)),keep)}});
+ inc.forEach((n,id)=>{if(!state.nodes.some(x=>x.id===id)&&!deleted.has(id))state.nodes.push(JSON.parse(JSON.stringify(n)))});
+ ince.forEach((e,id)=>{if(!state.edges.some(x=>x.id===id)&&state.nodes.some(n=>n.id===e.source)&&state.nodes.some(n=>n.id===e.target))state.edges.push(JSON.parse(JSON.stringify(e)))})}
+function applyArgs(a){pending=null;
+ if(a.epoch!==undefined&&a.epoch!==epoch){epoch=a.epoch;dirty=0;touched.clear();deleted.clear();undo=[];redo=[];firstRender=true;selected=null;if(applyFlash){clearTimeout(applyFlash);applyFlash=null}updApply()}
+ if(dirty>0){state.labels=a.labels||{};state.elabels=a.edge_labels||{};state.ew=a.edge_widths||{};state.p=a.pressures||{};state.q=a.rates||{};rebase(a);setStatus(a.status,a.status_message);render();return}
+state.labels=a.labels||{};state.elabels=a.edge_labels||{};state.ew=a.edge_widths||{};if(a.palette&&a.palette.length){const sg=JSON.stringify(a.palette);if(sg!==palSig){palSig=sg;palGroups=a.palette;buildPalette()}}
  state.nodes=JSON.parse(JSON.stringify(a.nodes||[]));state.edges=JSON.parse(JSON.stringify(a.edges||[]));state.p=a.pressures||{};state.q=a.rates||{};
  if(a.selected!==undefined&&a.selected!==null)selected=a.selected;if(selected&&!nodeById(selected)&&!state.edges.some(e=>e.id===selected)&&!String(selected).startsWith('drain:')&&!String(selected).startsWith('comm:'))selected=null;
  setStatus(a.status,a.status_message);render();if(firstRender){firstRender=false;fit()}}

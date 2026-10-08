@@ -31,4 +31,21 @@ Streamlit could not be installed in the build sandbox, so the live UI has **neve
 - [ ] Set a facility limit at ~50 % of natural rate: forecast holds it (choke or duty cycle).
 - [ ] Set a limit at ~10 %: a message 'Capacity limit cannot be held by steady choking…' is shown and the lowest stable rate is reported.
 
+## 7. Round 6 — editing, mask, tank, Eclipse
+- [ ] Sidebar / Network tab **Start from a blank page** asks for confirmation, then the canvas is empty and the hint shows.
+- [ ] Add 3 components from the canvas palette and drag them: nothing reloads; the canvas **Apply** button turns orange ("Apply N changes"), press it → green "Applied" and a green notice appears below the canvas.
+- [ ] Select a well and change several values in the panel: only the panel refreshes (no flicker of other tabs); the orange **Apply changes** bar appears; press it → canvas and status refresh.
+- [ ] Constraints, Batch editor, Uptime and Flowlines tables: type in several cells (no rerun), press the orange Apply button once; a coloured confirmation appears.
+- [ ] **Mask** a well (toolbar button or panel checkbox), Apply, Solve: the well is greyed and absent from the results/forecast; unmask restores it.
+- [ ] Tank: palette item is "Tank"; in the panel choose *Oil with gas cap*, set m = 0.5; the pressure falls more slowly in the forecast than with plain *Oil*.
+- [ ] Prediction source → tank → *Read Eclipse binary results*: select `.SMSPEC` + `.UNSMRY` together, pick FPR (and FWCT/FGOR), press *Use as this tank's prediction table* then *Apply to tank*.
+- [ ] Tabs: only six top-level tabs; no empty "Availability & downtime" tab.
+
+## 8. Round 7 — palette, Darcy, schedule, pressure, checks
+- [ ] Palette shows one **Tank**, one **Well**, one **Separator**; in the panel set the well to gas producer / water injector, and the separator to three-phase or stage.
+- [ ] Well panel: tick **Compute the inflow from reservoir properties**; PI changes with permeability; *Horizontal* + lateral length 1000 m gives several times the vertical PI; lowering kv/kh lowers it.
+- [ ] Well / injector with a tank assigned: no pressure input, caption names the tank; change the tank pressure and Apply: the well follows.
+- [ ] Schedule: pick *Element type* = Well, event *Darcy: permeability*, set a date, add; run the forecast: PI drops/rises from that date. Repeat with a Tank event (target RF, aquifer) and a temperature event in °F on the Field profile.
+- [ ] Tools → Model checks → *Input & unit consistency*: set a tubing ID of 3.5 → error naming "inch"; fix it → clean.
+
 Report: screenshot + the browser/terminal traceback for anything that fails.

@@ -32,6 +32,13 @@ def well_settings(prm: dict) -> dict:
     mult=skin_adjusted_pi(1.0,skin,cref)
     # Calibration multiplier on productivity (forecast assumption; network/calibration.py). Scales PI, Vogel qmax and gas C.
     pm=min(max(_f(p,'productivity_multiplier',1.0),1e-3),1e3)
+    # Darcy IPR (physics/darcy_ipr.py): PI / gas C computed from permeability, pay, drainage radius, geometry (vertical / deviated / horizontal) and layers.
+    # The skin is then part of the Darcy denominator, so the empirical skin multiplier is not applied on top.
+    iname=_ipr_name(p.get('ipr_model','PI')); darcy=None
+    if p.get('darcy') in (True,'true','True',1):
+        from physics.darcy_ipr import darcy_ipr
+        darcy=darcy_ipr(p,max(_f(p,'reservoir_pressure_bar',200.0),0.0),'gas' if iname=='Gas' else 'oil')
+        mult=1.0; pi0=darcy['pi']; qmax0=darcy['pi']*max(_f(p,'reservoir_pressure_bar',200.0),0.0)/1.8
     mult*=pm
     lift=str(p.get('lift_type','none') or 'none').lower().replace(' ','_')
     available=p.get('available',True)
@@ -91,7 +98,7 @@ def well_settings(prm: dict) -> dict:
         'geometry':geometry,
         'pr':max(_f(p,'reservoir_pressure_bar',200.0),0.0),
         'ipr_model':_ipr_name(p.get('ipr_model','PI')),
-        'gas_c':max(_f(p,'gas_c_sm3d_bar2n',50.0),0.0)*pm, 'gas_n':min(max(_f(p,'gas_n',1.0),0.5),1.0),
+        'gas_c':(darcy['gas_c'] if darcy else max(_f(p,'gas_c_sm3d_bar2n',50.0),0.0))*pm, 'gas_n':(1.0 if darcy else min(max(_f(p,'gas_n',1.0),0.5),1.0)), 'darcy':darcy,
         'pi':pi0*mult, 'qmax':qmax0*mult,
         'depth':depth, 'tubing_id':max(_f(p,'tubing_id_m',0.0762),1e-3),
         'roughness':max(_f(p,'tubing_roughness_m',4.5e-5),0.0),
@@ -108,7 +115,7 @@ def well_settings(prm: dict) -> dict:
                'speed_fraction':max(_f(p,'esp_speed_fraction',1.0),1e-3)} if lift=='esp' else None,
         'lift_assist_bar':max(_f(p,'lift_assist_bar',0.0),0.0),
         'segments':max(int(_f(p,'vlp_segments',DEFAULT_VLP_SEGMENTS)),1),
-        'open':bool(available) and opening>0 and {'PI':pi0>0,'Vogel':qmax0>0,'Gas':_f(p,'gas_c_sm3d_bar2n',50.0)>0}[_ipr_name(p.get('ipr_model','PI'))],
+        'open':bool(available) and opening>0 and {'PI':pi0>0,'Vogel':qmax0>0,'Gas':(darcy['gas_c'] if darcy else _f(p,'gas_c_sm3d_bar2n',50.0))>0}[_ipr_name(p.get('ipr_model','PI'))],
         'max_rate':max_rate,
         'max_rate_reported':max_rate,
         'skin':skin,

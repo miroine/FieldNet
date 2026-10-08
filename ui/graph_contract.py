@@ -188,6 +188,8 @@ def solver_input(nodes, edges):
     """Isolated copy of the current graph for the solver - the only form the solver receives.
     Wells/injectors assigned to a reservoir tank take the tank's pressure (and gas-tank fluid)."""
     from network.reservoir_mb import apply_tank_links
+    from network.masking import strip_masked
+    nodes, edges = strip_masked(nodes, edges)      # masked elements stay on the layout but never reach the solver
     return apply_tank_links(copy.deepcopy(to_builtin(nodes))), copy.deepcopy(to_builtin(edges))
 
 
@@ -226,6 +228,8 @@ def run_solve(state, solver, **kwargs):
         state.pop('v21_warm_start', None)
         state['solve'] = {'hash': h, 'status': FAILED, 'message': f'Solver error: {exc}', 'results': None}
         return state['solve']
+    from network.masking import pad_results
+    p, q = pad_results(state.get('nodes', []), state.get('edges', []), p, q)
     ok = bool(p) and info.get('quality_gate') == 'PASS'
     if ok: msg = f"Converged · {sum(v.get('liquid_rate_m3d', 0.0) for v in d.values()):,.0f} m³/d liquid"
     else:
