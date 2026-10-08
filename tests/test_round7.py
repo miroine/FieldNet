@@ -217,3 +217,69 @@ def test_dropping_a_second_tank_on_a_well_makes_it_commingled():
     n2, _, issues = normalize_graph(n, e2)
     ww = next(x for x in n2 if x['id'] == w['id'])
     assert {a['tank_id'] for a in ww['params']['reservoir_alloc']} == {t1['id'], 'T2'} and ww['params']['reservoir_id'] == t1['id']
+
+
+# ---- copy / paste and PVT labels --------------------------------------------------------------------------------------------
+def test_copy_params_copies_groups_but_never_identity_or_links():
+    from network.copy_paste import copy_params, WELL_GROUPS
+    n, e = demo_field_case(); a, b = [x for x in n if x['kind'] == 'well'][:2]
+    a['params'].update(pi_m3d_bar=33.0, tubing_id_m=0.15, reservoir_alloc=[{'tank_id': 'X', 'share': 1}]); b['params']['pi_m3d_bar'] = 5.0
+    tank_b = b['params'].get('reservoir_id')
+    k = copy_params(a, b, [WELL_GROUPS[0]])
+    assert k >= 1 and b['params']['pi_m3d_bar'] == 33.0 and b['params']['tubing_id_m'] != 0.15              # only the chosen group
+    copy_params(a, b, WELL_GROUPS); assert b['params']['tubing_id_m'] == 0.15
+    assert b['id'] != a['id'] and b['name'] != a['name'] and b['params'].get('reservoir_id') == tank_b and 'reservoir_alloc' not in b['params']
+    a['params']['trajectory'] = {'x': [1, 2]}; copy_params(a, b, WELL_GROUPS); b['params']['trajectory']['x'].append(3)
+    assert a['params']['trajectory']['x'] == [1, 2]                                                          # deep copy
+
+
+def test_copy_between_tanks_and_kind_mismatch():
+    import copy
+    from network.copy_paste import copy_params, TANK_GROUPS
+    n, e = demo_field_case(); t = next(x for x in n if x['kind'] == 'reservoir'); w = next(x for x in n if x['kind'] == 'well')
+    t2 = copy.deepcopy(t); t2['id'] = 'T2'; t2['params']['stoiip_sm3'] = 1.0
+    copy_params(t, t2, [TANK_GROUPS[0]]); assert t2['params']['stoiip_sm3'] == t['params']['stoiip_sm3']
+    with pytest.raises(ValueError): copy_params(t, w, TANK_GROUPS)
+
+
+def test_pvt_map_flags_differences_only():
+    from network.pvt_info import pvt_map
+    n, e = demo_field_case(); t = next(x for x in n if x['kind'] == 'reservoir'); w = next(x for x in n if x['kind'] == 'well')
+    assert not any(v['diff'] for v in pvt_map(n).values())                                                   # unknown values are not differences
+    t['params']['fluid_name'] = 'Light'; w['params']['fluid_name'] = 'Heavy'
+    m = pvt_map(n); assert m[w['id']]['diff'] and 'Light' not in m[w['id']]['label'] and 'differs' in m[w['id']]['note'] and not m[t['id']]['diff']
+    w['params']['fluid_name'] = 'Light'; assert not pvt_map(n)[w['id']]['diff']
+    t['params']['pvt'] = {'model': 'correlation', 'api': 30.0, 'gas_sg': 0.8, 'rsb_sm3sm3': 90.0}
+    m = pvt_map(n); assert 'corr' in m[t['id']]['label'] and m[w['id']]['diff']                              # correlation PVT vs screening PVT
+
+
+class _StubSt:
+    class Rerun(Exception): pass
+    def __init__(self, choice): self.session_state = {}; self.choice = choice; self.notes = []
+    def selectbox(self, label, options, key=None, format_func=str, **k): return self.choice if self.choice in options else options[0]
+    def checkbox(self, label, key=None, **k): return self.session_state.get(key, True)
+    def caption(self, *a, **k): self.notes.append(a)
+    def rerun(self): raise self.Rerun()
+
+
+def test_pvt_dropdown_stamps_the_fluid_on_a_tank_and_its_wells():
+    from network import fluids as fl
+    from ui.pvt_assign_view import pvt_dropdown
+    n, e = demo_field_case(); t = next(x for x in n if x['kind'] == 'reservoir'); ws = [x for x in n if x['kind'] == 'well']
+    st = _StubSt('Heavy'); st.session_state['fluids'] = {'Heavy': fl.new_fluid('Heavy', api=22.0, gas_sg=0.7, gor_sm3sm3=40.0)}
+    with pytest.raises(_StubSt.Rerun): pvt_dropdown(st, n, e, t, t['id'])
+    assert t['params']['fluid_name'] == 'Heavy' and all(w['params']['fluid_name'] == 'Heavy' and w['params']['api'] == 22.0 for w in ws)
+    pvt_dropdown(st, n, e, t, t['id'])                                  # unchanged choice: nothing is re-stamped, no rerun
+    ws[0]['params']['api'] = 30.0; pvt_dropdown(st, n, e, t, t['id']); assert ws[0]['params']['api'] == 30.0
+    st.choice = ''
+    with pytest.raises(_StubSt.Rerun): pvt_dropdown(st, n, e, ws[1], ws[1]['id'])
+    assert 'fluid_name' not in ws[1]['params'] and ws[1]['params']['api'] == 22.0
+
+
+def test_pvt_dropdown_on_a_flowline():
+    from network import fluids as fl
+    from ui.pvt_assign_view import pvt_dropdown
+    n, e = demo_field_case(); ed = next(x for x in e if x.get('kind', 'pipeline') == 'pipeline')
+    st = _StubSt('Light'); st.session_state['fluids'] = {'Light': fl.new_fluid('Light', api=40.0)}
+    with pytest.raises(_StubSt.Rerun): pvt_dropdown(st, n, e, ed, ed['id'], is_edge=True)
+    assert ed['params']['fluid_name'] == 'Light' and ed['params']['api'] == 40.0

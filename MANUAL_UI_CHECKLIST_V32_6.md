@@ -48,8 +48,14 @@ Streamlit could not be installed in the build sandbox, so the live UI has **neve
 - [ ] Schedule: pick *Element type* = Well, event *Darcy: permeability*, set a date, add; run the forecast: PI drops/rises from that date. Repeat with a Tank event (target RF, aquifer) and a temperature event in °F on the Field profile.
 - [ ] Tools → Model checks → *Input & unit consistency*: set a tubing ID of 3.5 → error naming "inch"; fix it → clean.
 
-- [ ] Select a well, in *Drains reservoir tank(s)* pick two tanks, set shares 60/40: caption shows the weighted pressure; Apply; Solve; forecast: both tanks lose pressure, the well row in the results names both tanks. Drag a second tank onto a well in the canvas: same result.
+- [ ] Select a well, in *Drains reservoir tank(s)* pick two tanks, set shares 60/40: caption shows the weighted pressure; Apply; Solve; forecast: both tanks lose pressure, the well row in the results names both tanks. Drag a second tank onto a well in the canvas: same result, with two dashed lines labelled with their %; select one line and press Delete to remove just that tank.
 - [ ] Click **Apply changes** (properties panel and canvas) on a larger model and note how long it takes; open Tools → Model checks → *Last run timing* and send me the top rows if it is slow. If the red "page re-ran itself" message appears, send a screenshot.
 - [ ] Network tab → Data tables → *Prepare export files* builds the Excel/CSV/YAML/JSON downloads.
+
+- [ ] Select a well → *Copy / paste settings between wells*: paste the inflow group from another well; then copy a well to two others. Same for a tank. Press Apply changes: values appear in the other elements' panels.
+- [ ] Give a tank and a well different fluid names (Fluid & PVT tab): the well shows ⚠ in orange on the canvas and a warning appears under it; give them the same fluid: the warning goes.
+
+- [ ] Create two fluids (Fluid & PVT → Fluid library). Select a tank: *PVT model (fluid)* shows both; pick one with 'also give it to the wells' ticked: the wells' API/GOR follow and the canvas labels show the fluid name. Do the same on a well and a flowline.
+- [ ] Select a tank: *Link this tank to another tank* → Add link; or drag from its OUT port onto another tank. A labelled dashed orange line appears; select it to edit the transmissibility.
 
 Report: screenshot + the browser/terminal traceback for anything that fails.

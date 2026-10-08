@@ -287,8 +287,18 @@ def communication_editor(st, node, nodes):
     p = node.setdefault('params', {}); sid = node['id']; names = {n['id']: n.get('name', n['id']) for n in nodes if n.get('kind') == 'reservoir'}
     links = p.get('communication') or []
     incoming = [(n['id'], c) for n in nodes if n.get('kind') == 'reservoir' and n['id'] != sid for c in (n.get('params') or {}).get('communication') or [] if c.get('to') == sid]
+    linked = {c['to'] for c in links} | {o for o, _ in incoming}
+    free = [i for i in names if i != sid and i not in linked]
+    if free:
+        c1, c2 = st.columns([3, 1.3])
+        tgt = c1.selectbox('Link this tank to another tank', free, format_func=lambda k: names.get(k, k), key='cadd' + sid, help='Same as dragging from this tank\'s OUT port onto the other tank on the canvas.')
+        if c2.button('➕ Add link', key='cbtn' + sid, use_container_width=True):
+            p.setdefault('communication', []).append({'to': tgt, 'transmissibility_m3d_bar': 100.0, 'max_transfer_m3d': None})
+            st.session_state['_applied_note'] = f"Tank link {names.get(sid, sid)} to {names.get(tgt, tgt)} added (edit the transmissibility below). Press Apply changes to redraw."
+            st.rerun()
+        links = p.get('communication') or []
     if not links and not incoming:
-        st.caption('Communication: drag from this tank\'s OUT port onto another tank in the editor.'); return
+        st.caption('Communication: drag from this tank\'s OUT port onto another tank in the editor, or use the selector above.'); return
     with st.expander(f'Tank communication ({len(links) + len(incoming)} links)', expanded=True):
         for i, c in enumerate(links):
             st.markdown(f"**→ {names.get(c['to'], c['to'])}**")
