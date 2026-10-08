@@ -61,6 +61,12 @@ GitHub Actions runs these regression suites on pushes and pull requests. The opt
 python tests/browser/run_editor_browser_test.py
 ```
 
+### Weekly health report
+
+The **Weekly App Health Report** workflow runs the full pytest suite every Monday at 08:00 UTC. It can also be started manually from the GitHub Actions tab. Each run appends its result and follow-up suggestions to the recurring [Weekly FieldNet Health Report](https://github.com/miroine/fieldnet/issues) issue and uploads the JUnit test report when available.
+
+If dependency installation or tests fail, the workflow asks GitHub Copilot to investigate and attempts to assign it to the report issue. Copilot changes are expected to arrive as a pull request for review; the workflow does not commit fixes directly to `main`. Automatic assignment depends on Copilot coding agent being enabled for the repository.
+
 ## Project layout
 
 | Path | Responsibility |
