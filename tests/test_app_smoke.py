@@ -76,7 +76,9 @@ def test_monte_carlo_builder_runs_and_has_green_button():
     root = run_app(APP, {'nodes': n, 'edges': e, 'v17_samples': 5, 'v17_years': 0.5}, pressed={'rb_mc'})
     s = root.session_state
     assert s.get('mc_params') and s['mc_params'][0]['target_id'] == 'kind:well'
-    assert s.get('v17_mc') and s['_rb_rb_mc']['status'] == 'done', {k: v for k, v in s.items() if k.startswith('_rb')}
+    from network.mc_job import get_job                         # the run is a background job; the page picks the result up on a later run
+    job = get_job('v17_mc'); assert job is not None
+    job.thread.join(timeout=240); assert job.status == 'done' and job.result['successful_samples'] == 5, (job.status, job.error)
     errs = [c for c in root.calls if c[0] == 'error']; assert not errs, errs
 
 

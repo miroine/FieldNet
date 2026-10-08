@@ -193,6 +193,10 @@ def failure_diagnostics(runs: list[dict], parameters: Iterable[UncertainParamete
 KPI_KEYS=["cumulative_oil_m3","cumulative_liquid_m3","final_oil_m3d","final_liquid_m3d","convergence_fraction","constraint_events"]
 MAX_SERIES_BYTES=256*1024*1024  # cap on retained per-realization time series (float32 arrays)
 
+class MonteCarloCancelled(Exception):
+    """Raised inside run_monte_carlo when the cancel callback returns True."""
+
+
 def default_workers() -> int:
     """min(cpu_count-1, 8), at least 1."""
     return max(1,min((os.cpu_count() or 1)-1,8))
@@ -226,7 +230,9 @@ def _mc_task(chunk,ctx=None):
     return out
 
 def _mp_context():
-    import multiprocessing as mp
+    import multiprocessing as mp, threading
+    # fork() from a multi-threaded host (Streamlit, a background job thread) can deadlock or crash the whole app; spawn is safe there.
+    if threading.current_thread() is not threading.main_thread() or threading.active_count()>1: return mp.get_context("spawn"),"spawn"
     try: return mp.get_context("fork"),"fork"
     except ValueError: return mp.get_context("spawn"),"spawn"
 
@@ -245,7 +251,7 @@ def parallel_map(fn,items,workers=1):
 def _series_bytes(s) -> int:
     return sum(a.nbytes for a in s["vars"].values()) if s else 0
 
-def run_monte_carlo(nodes, edges, scenario: DevelopmentScenario, config: MonteCarloConfig, forecast_runner=None, progress: Callable[[int,int],None]|None=None, *, workers: int=1, keep_series: bool=False, series_variables: Iterable[str]|None=None, executor=None):
+def run_monte_carlo(nodes, edges, scenario: DevelopmentScenario, config: MonteCarloConfig, forecast_runner=None, progress: Callable[[int,int],None]|None=None, *, workers: int=1, keep_series: bool=False, series_variables: Iterable[str]|None=None, executor=None, cancel: Callable[[],bool]|None=None):
     """Monte-Carlo wrapper. ``workers>1`` (or a user ``executor``) evaluates realizations in parallel;
     rows are ordered by sample index so results are identical to the serial run for the same seed.
     ``keep_series=True`` retains per-realization system time series (float32, capped at
@@ -262,6 +268,7 @@ def run_monte_carlo(nodes, edges, scenario: DevelopmentScenario, config: MonteCa
         if progress: progress(done[0],n)
     def serial(idx):
         for i in idx:
+            if cancel is not None and cancel(): raise MonteCarloCancelled()
             row,series=_run_one(i,samples[i],ctx); results[i]=(row,series); tick(1)
     parallel=(workers>1 or executor is not None) and n>1
     ex=None; own=False; start=None
@@ -291,6 +298,7 @@ def run_monte_carlo(nodes, edges, scenario: DevelopmentScenario, config: MonteCa
                 f=ex.submit(_mc_task,payload) if own else ex.submit(_mc_task,payload,ctx)
                 futs[f]=idx
             for f in as_completed(futs):
+                if cancel is not None and cancel(): raise MonteCarloCancelled()
                 idx=futs[f]
                 try:
                     for i,row,series in f.result(): results[i]=(row,series)

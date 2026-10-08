@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 from network.field_development import DevelopmentScenario
 from network.uncertainty import UncertainParameter, MonteCarloConfig, run_monte_carlo, default_workers
+from network.mc_job import start_job, get_job, SPEEDS
 from network import risk_profiles as rp
 from ui.widgets import clean_num, clean_text
 from ui.run_button import run_button
@@ -115,22 +116,51 @@ def _param_builder(st,nodes,edges):
             ss.mc_params=[{k:(None if (isinstance(v,float) and v!=v) else v) for k,v in r.items()} for r in ed.to_dict('records') if clean_text(r.get('name'))]; st.rerun()
     return rows
 
+def _mc_status_body(st):
+    job=get_job('v17_mc')
+    if job is None: return
+    if job.status=='running':
+        eta=job.eta_s; txt=f'Realization {job.done}/{job.n}  ·  {job.elapsed:.0f} s'+(f'  ·  about {eta/60:.1f} min left' if eta is not None else '  ·  estimating time…')
+        st.progress(min(job.done/max(job.n,1),1.0),text=txt)
+        if st.button('■ Cancel run',key='mc_cancel'): job.cancel()
+        st.caption('The run goes on in the background: you can change tabs or settings without restarting it.')
+    elif job.status=='done':
+        if st.session_state.get('v17_mc_t0')!=job.t0:
+            st.session_state['v17_mc']=job.result; st.session_state['v17_mc_t0']=job.t0
+            try: st.rerun()
+            except Exception: pass
+        st.success(f'Finished {job.n} realizations in {job.elapsed:.0f} s.')
+    elif job.status=='cancelled': st.warning(f'Cancelled after {job.done}/{job.n} realizations.')
+    else: st.error(f'Monte Carlo failed: {job.error}')
+
+
+def _mc_status(st):
+    job=get_job('v17_mc')
+    if job is not None and job.status=='running':
+        try: st.fragment(run_every=2)(_mc_status_body)(st); return
+        except TypeError: pass
+    _mc_status_body(st)
+
+
 def render_uncertainty(st,nodes,edges):
     st.subheader('Uncertainty, Monte Carlo & Risk')
     st.caption('Planning-level probabilistic wrapper around the deterministic production engine. P90 is conservative and P10 optimistic for production/reserves-style metrics. Samples are reproducible from the displayed seed.')
     c1,c2,c3,c4=st.columns(4)
-    start=c1.date_input('MC start date',key='v17_start').isoformat(); years=c2.number_input('MC horizon [years]',0.03,50.0,1.0,0.5,key='v17_years'); step=c3.selectbox('MC timestep [days]',[10,30,60,90],index=1,key='v17_step'); samples=c4.number_input('Samples',5,1000,50,5,key='v17_samples')
+    start=c1.date_input('MC start date',key='v17_start').isoformat(); years=c2.number_input('MC horizon [years]',0.03,50.0,1.0,0.5,key='v17_years'); step=c3.selectbox('MC timestep [days]',[10,30,60,90],index=3,key='v17_step'); samples=c4.number_input('Samples',5,1000,50,5,key='v17_samples')
     c5,c6=st.columns(2); seed=c5.number_input('Random seed',0,2_147_483_647,1701,1,key='v17_seed'); method=c6.selectbox('Sampling',['lhs','random'],key='v17_method')
     c7,c8=st.columns(2); maxw=default_workers(); workers=c7.number_input('Compute workers',1,maxw,1,1,key='v17_workers',help='Parallel processes for realizations (results identical to serial). Upper bound = min(CPUs-1, 8).'); store=c8.checkbox('Store full profiles',True,key='v17_store_profiles',help='Keep each realization\'s system time series (float32, memory-capped) to build P90/P50/P10/Mean profiles.')
     rows=_param_builder(st,nodes,edges)
     df=pd.DataFrame(rows,columns=PARAM_COLS)
-    for rb in run_button(st,'▶ Run Monte Carlo',key='rb_mc',type='primary',model_hash=graph_hash(nodes,edges)):
+    speed=st.selectbox('Run speed',list(SPEEDS),index=1,key='v17_speed',help='Each realization is a full forecast. Fewer tubing segments is faster and changes rates by well under 1 %. Per-element results are never stored in Monte Carlo runs.')
+    ss=st.session_state; job=get_job('v17_mc'); running=bool(job and job.status=='running')
+    if float(years)*365.25/max(int(step),1)>150: st.info(f'{int(years*365.25/step)} timesteps per realization: expect a long run. A 90-day step is roughly 3x faster than 30 days and is usually adequate for cumulative-oil statistics.')
+    if st.button('▶ Run Monte Carlo',key='rb_mc',type='primary',disabled=running,use_container_width=True):
         try:
             pars=parse_uncertainty_rows(df.to_dict('records')); cfg=MonteCarloConfig(samples=int(samples),seed=int(seed),method=method,parameters=pars); sc=DevelopmentScenario('Monte Carlo',start,float(years),int(step))
-            rb.progress(0.0,'Running realizations…')
-            def prog(i,n): rb.progress(i/n,f'Realization {i}/{n}')
-            st.session_state.v17_mc=run_monte_carlo(nodes,edges,sc,cfg,progress=prog,workers=int(workers),keep_series=bool(store))
-        except Exception as exc: rb.fail(f'Monte Carlo failed: {exc}')
+            job=start_job('v17_mc',nodes,edges,sc,cfg,workers=int(workers),keep_series=bool(store),vlp_segments=SPEEDS[speed]); running=True; ss.pop('v17_mc',None)
+        except Exception as exc: st.error(f'Monte Carlo failed: {exc}')
+    _mc_status(st)
+    if job and job.status=='done' and ss.get('v17_mc_t0')!=job.t0: ss['v17_mc']=job.result; ss['v17_mc_t0']=job.t0
     r=st.session_state.get('v17_mc')
     if not r: return
     a,b,c,d=st.columns(4); a.metric('Successful',r['successful_samples']); b.metric('Failed',r['failed_samples']); c.metric('Success rate',f"{100*r.get('success_fraction',0):.1f}%"); d.metric('Seed',r['seed'])

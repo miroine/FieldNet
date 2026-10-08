@@ -5,13 +5,16 @@ import pandas as pd
 WELLS = ('well',); INJ = ('water_injector', 'gas_injector', 'injector')
 
 
+from network.reservoir_mb import linked_tank_ids
+
+
 def tank_coupling_table(nodes, edges=None):
     rows = []
     byid = {n['id']: n for n in nodes}
     for t in nodes:
         if t.get('kind') != 'reservoir': continue
         p = t.get('params') or {}; ph = p.get('fluid_phase', 'oil')
-        drains = [w.get('name', w['id']) for w in nodes if w.get('kind') in WELLS and (w.get('params') or {}).get('reservoir_id') == t['id']]
+        drains = [w.get('name', w['id']) for w in nodes if w.get('kind') in WELLS and t['id'] in linked_tank_ids(w.get('params'))]
         supports = [w.get('name', w['id']) for w in nodes if w.get('kind') in INJ and (w.get('params') or {}).get('reservoir_id') == t['id']]
         links = [byid[c['to']].get('name', c['to']) for c in p.get('communication') or [] if c.get('to') in byid]
         links += [n.get('name', n['id']) for n in nodes if n.get('kind') == 'reservoir' for c in (n.get('params') or {}).get('communication') or [] if c.get('to') == t['id']]

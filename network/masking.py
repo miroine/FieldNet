@@ -35,10 +35,11 @@ def masked_ids(nodes, edges):
         for e in edges: out.setdefault(e['source'], []).append(e['id'])
         for n in nodes:
             if n['id'] in mn or n.get('kind') not in SOURCES: continue
-            rid = (n.get('params') or {}).get('reservoir_id')
+            from network.reservoir_mb import linked_tank_ids
+            rids = linked_tank_ids(n.get('params'))
             all_out = out.get(n['id'], [])
             cut = bool(all_out) and all(i in me for i in all_out)
-            if (rid and rid in mn) or cut: mn.add(n['id']); changed = True
+            if (rids and all(r in mn for r in rids)) or cut: mn.add(n['id']); changed = True
     return mn, me
 
 

@@ -85,13 +85,26 @@ def _import_export(st, nodes, edges, reset, on_project):
                 if rep['unknown']: st.warning('Not found in the model: ' + ', '.join(rep['unknown'][:15]) + (' …' if len(rep['unknown']) > 15 else ''))
                 if rep['ignored_columns']: st.caption('Ignored columns: ' + ', '.join(rep['ignored_columns']))
     st.markdown('**Export all inputs**')
+    from ui.graph_contract import graph_hash
+    h = graph_hash(nodes, edges); cache = ss.get('bt_export')
+    if not cache or cache.get('hash') != h:          # building workbook / YAML on every page run is slow on big models: build on demand only
+        if st.button('Prepare export files (Excel, CSV, YAML, JSON)', key='bt_prep', use_container_width=True):
+            cache = {'hash': h}
+            try: cache['xlsx'] = B.to_workbook(nodes, edges)
+            except Exception as exc: cache['xlsx_err'] = str(exc)
+            try: cache['yaml'] = B.to_yaml(nodes, edges)
+            except Exception as exc: cache['yaml_err'] = str(exc)
+            cache['json'] = json.dumps({'nodes': nodes, 'edges': edges}, indent=2, default=str)
+            ss['bt_export'] = cache
+        else:
+            st.caption('Files are built when you press the button, so editing stays fast.'); return
     c1, c2, c3, c4 = st.columns(4)
-    try: c1.download_button('Excel (all groups)', B.to_workbook(nodes, edges), 'fieldnet_inputs.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', use_container_width=True)
-    except Exception as exc: c1.caption(f'Excel export unavailable: {exc}')
+    if 'xlsx' in cache: c1.download_button('Excel (all groups)', cache['xlsx'], 'fieldnet_inputs.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', use_container_width=True)
+    else: c1.caption(f"Excel export unavailable: {cache.get('xlsx_err')}")
     grp = [g for g in list(B.GROUPS) + ['Flowlines'] if B.members(nodes, edges, g)]
     if grp:
         pg = c2.selectbox('CSV group', grp, key='bt_csvg', label_visibility='collapsed')
         c2.download_button('CSV (this group)', B.to_csv(nodes, edges, pg), f"fieldnet_{pg.lower().replace(' & ', '_').replace(' ', '_')}.csv", 'text/csv', use_container_width=True)
-    try: c3.download_button('YAML (project)', B.to_yaml(nodes, edges), 'fieldnet_project.yaml', 'text/yaml', use_container_width=True)
-    except Exception as exc: c3.caption(f'YAML export unavailable: {exc}')
-    c4.download_button('JSON (project)', json.dumps({'nodes': nodes, 'edges': edges}, indent=2, default=str), 'fieldnet_project.json', 'application/json', use_container_width=True)
+    if 'yaml' in cache: c3.download_button('YAML (project)', cache['yaml'], 'fieldnet_project.yaml', 'text/yaml', use_container_width=True)
+    else: c3.caption(f"YAML export unavailable: {cache.get('yaml_err')}")
+    c4.download_button('JSON (project)', cache['json'], 'fieldnet_project.json', 'application/json', use_container_width=True)

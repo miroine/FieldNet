@@ -375,6 +375,44 @@ def tanks_from_nodes(nodes, pvt_tables: Optional[Dict[str, PVTTable]] = None):
             for n in nodes if n.get('kind') == 'reservoir'}
 
 
+# ---- wells that drain several tanks (commingled production) ---------------------------------------------------------------
+def tank_alloc(p):
+    """[(tank_id, share)] a well/injector draws from, shares normalised to 1. ``params.reservoir_alloc`` = [{'tank_id','share'}, ...]
+    (share = fraction of the well's productivity coming from that tank); otherwise the single ``reservoir_id``. Largest share first."""
+    p = p or {}; rows = []
+    for a in p.get('reservoir_alloc') or []:
+        if not isinstance(a, dict) or not a.get('tank_id'): continue
+        try: sh = float(a.get('share', 0.0))
+        except (TypeError, ValueError): sh = 0.0
+        if sh > 0: rows.append((str(a['tank_id']), sh))
+    if not rows:
+        return [(p['reservoir_id'], 1.0)] if p.get('reservoir_id') else []
+    tot = sum(sh for _, sh in rows); merged = {}
+    for tid, sh in rows: merged[tid] = merged.get(tid, 0.0) + sh / tot
+    return sorted(merged.items(), key=lambda kv: -kv[1])
+
+
+def primary_tank_id(p):
+    a = tank_alloc(p)
+    return a[0][0] if a else None
+
+
+def linked_tank_ids(p):
+    return [t for t, _ in tank_alloc(p)]
+
+
+def well_tank_split(p, tanks, bhp_bar=None):
+    """{tank_id: share of the well's current production}. Static productivity shares, or - when the flowing bottom-hole pressure is known - shares
+    weighted by each tank's drawdown (q_i = share_i * PI * (Pr_i - Pwf)), which is how a commingled well really splits (no cross-flow modelled)."""
+    a = [(t, s) for t, s in tank_alloc(p) if t in tanks]
+    if not a: return {}
+    tot = sum(s for _, s in a); a = [(t, s / tot) for t, s in a]
+    if bhp_bar is not None and len(a) > 1:
+        w = [(t, s * max(float(tanks[t].p) - float(bhp_bar), 0.0)) for t, s in a]; ws = sum(x for _, x in w)
+        if ws > 0: return {t: x / ws for t, x in w}
+    return dict(a)
+
+
 def apply_tank_links(nodes, tanks=None):
     """Copy tank pressure (and, for gas tanks, the fluid) onto every linked well/injector.
 
@@ -382,9 +420,15 @@ def apply_tank_links(nodes, tanks=None):
     """
     ns = copy.deepcopy(nodes); tanks = tanks if tanks is not None else tanks_from_nodes(ns)
     for n in ns:
-        rid = (n.get('params') or {}).get('reservoir_id')
-        if rid and rid in tanks and n.get('kind') in ('well', 'water_injector', 'gas_injector', 'injector'):
-            ov = tanks[rid].well_overrides(n.get('params'))
+        prm = n.get('params') or {}
+        split = [(t, s) for t, s in tank_alloc(prm) if t in tanks]
+        if split and n.get('kind') in ('well', 'water_injector', 'gas_injector', 'injector'):
+            tot = sum(s for _, s in split); split = [(t, s / tot) for t, s in split]
+            ov = tanks[split[0][0]].well_overrides(n.get('params'))                  # fluid properties follow the dominant tank ...
+            if len(split) > 1:                                                       # ... pressure, water cut and GOR are the productivity-weighted mix
+                ovs = [(s, tanks[t].well_overrides(n.get('params'))) for t, s in split]
+                for k in ('reservoir_pressure_bar', 'water_cut', 'gor_sm3sm3'):
+                    if all(k in o for _, o in ovs): ov[k] = sum(s * float(o[k]) for s, o in ovs)
             if n['kind'] != 'well': ov = {'reservoir_pressure_bar': ov['reservoir_pressure_bar']}
             n.setdefault('params', {}).update(ov); n['params']['_tank_linked'] = True
     return ns
@@ -396,7 +440,7 @@ def ensure_tank_links(nodes):
     well's own reservoir pressure."""
     if not any(n.get('kind') == 'reservoir' for n in nodes): return nodes
     if all((n.get('params') or {}).get('_tank_linked') for n in nodes
-           if (n.get('params') or {}).get('reservoir_id') and n.get('kind') in ('well', 'water_injector', 'gas_injector', 'injector')):
+           if tank_alloc(n.get('params')) and n.get('kind') in ('well', 'water_injector', 'gas_injector', 'injector')):
         return nodes
     return apply_tank_links(nodes)
 
@@ -406,7 +450,7 @@ def tank_summary(nodes):
     rows = []
     for n in nodes:
         if n.get('kind') != 'reservoir': continue
-        t = Tank(n); linked = [w.get('name', w['id']) for w in nodes if (w.get('params') or {}).get('reservoir_id') == n['id']]
+        t = Tank(n); linked = [w.get('name', w['id']) for w in nodes if n['id'] in linked_tank_ids(w.get('params'))]
         rows.append({'Tank': t.name, 'Phase': t.phase, 'Pi [bar]': t.pi, 'STOIIP [MSm3]': t.n / 1e6 if t.phase == 'oil' else None,
                      'GIIP [GSm3]': t.g / 1e9, 'Pore volume [MSm3 res]': t.pv / 1e6, 'Linked wells/injectors': ', '.join(linked) or '—'})
     return rows

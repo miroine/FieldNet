@@ -54,6 +54,9 @@ def apply_events(nodes, edges, events, date):
         else: obj[field]=value
     return n,e
 
+from network.reservoir_mb import linked_tank_ids as _linked_ids, well_tank_split as _split
+
+
 def _step_rates(nn, details, info, tanks, edges=None, flows=None):
     """Instantaneous per-well and per-tank rates from one network solve."""
     wells={}; per_tank={k:{'oil':0.0,'wat':0.0,'gas':0.0,'winj':0.0,'ginj':0.0} for k in tanks}; winj=0.0
@@ -67,8 +70,8 @@ def _step_rates(nn, details, info, tanks, edges=None, flows=None):
             up=max(0.0,min(fdel.get(n['id'],1.0),1.0)) if use_av else 1.0; rate=rate0*up
             wc=float(prm.get('water_cut',0.0)); gor=float(prm.get('gor_sm3sm3',0.0)); o=rate*(1-wc); w=rate*wc; g=o*gor
             wells[n['id']]={'liq':rate,'oil':o,'wat':w,'gas':g,'dd':dd,'prm':prm,'name':n.get('name',n['id']),'uptime':up,'oil0':rate0*(1-wc),'gas0':rate0*(1-wc)*gor}
-            rid=prm.get('reservoir_id')
-            if rid in tanks: v=per_tank[rid]; v['oil']+=o; v['wat']+=w; v['gas']+=g
+            from network.reservoir_mb import well_tank_split
+            for rid,sh in well_tank_split(prm,tanks,dd.get('bhp_bar')).items(): v=per_tank[rid]; v['oil']+=o*sh; v['wat']+=w*sh; v['gas']+=g*sh
         elif n['kind'] in ('water_injector','gas_injector','injector'):
             qi=float((info.get('injector_rates') or {}).get(n['id'],0.0))*(max(0.0,min(fsup.get(n['id'],1.0),1.0)) if use_av else 1.0); rid=(n.get('params') or {}).get('reservoir_id')
             gas_inj=n['kind']=='gas_injector' or (n.get('params') or {}).get('injection_fluid')=='gas'
@@ -137,7 +140,7 @@ def iter_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, 
         for tk in tanks.values(): tk.apply_external(t if day is None else day, start_date)
         nn=_copy.deepcopy(nn0)
         for n in nn:
-            if n['kind']=='well' and n['id'] in state and not (n.get('params') or {}).get('reservoir_id') in tanks:
+            if n['kind']=='well' and n['id'] in state and not any(t in tanks for t in _linked_ids(n.get('params'))):
                 n.setdefault('params',{})['reservoir_pressure_bar']=state[n['id']]['pr']
         nn=apply_tank_links(nn,tanks)
         # Per-well decline curves / external-simulator profiles override the tank-derived inputs
@@ -206,8 +209,8 @@ def iter_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, 
                 a=wvol.setdefault(wid,{'liq':0.0,'oil':0.0,'wat':0.0,'gas':0.0,'up':0.0}); a['up']+=w['uptime']*sub
                 
                 for k in ('liq','oil','wat','gas'): a[k]+=w[k]*sub
-                rid=w['prm'].get('reservoir_id')
-                if rid in tanks: st['pr']=tanks[rid].p
+                _sp=_split(w['prm'],tanks)
+                if _sp: st['pr']=sum(sh*tanks[t].p for t,sh in _sp.items())
                 else:
                     cfg=dep.get(wid,{}); prm=w['prm']
                     decline=float(cfg.get('pressure_decline_bar_per_1000m3',prm.get('pressure_decline_bar_per_1000m3',0.03)))
@@ -230,7 +233,7 @@ def iter_forecast(nodes, edges, start_date, years=5, step_days=30, events=None, 
         for n in first_nn:
             if n['kind']!='well' or n['id'] not in first_details: continue
             dd=first_details[n['id']]; prm=n.get('params',{}); w=wavg.get(n['id'],{'liq':0.0,'oil':0.0,'wat':0.0,'gas':0.0}); rid=prm.get('reservoir_id')
-            well_rows.append({'Date':date,'Well':n['name'],'Well ID':n['id'],'Tank':tanks[rid].name if rid in tanks else '—','Status':dd.get('status'),'Liquid [m3/d]':w['liq'],'Oil [m3/d]':w['oil'],'Water [m3/d]':w['wat'],'Gas [Sm3/d]':w['gas'],'Reservoir pressure [bar]':float(prm.get('reservoir_pressure_bar',0.0)),'WHP [bar]':dd['whp_bar'],'BHP [bar]':dd['bhp_bar'],'Cumulative liquid [m3]':state[n['id']]['cum_liq'],'Cumulative oil [Sm3]':state[n['id']]['cum_oil'],'Uptime [%]':100*w.get('up',1.0)})
+            well_rows.append({'Date':date,'Well':n['name'],'Well ID':n['id'],'Tank':' + '.join(tanks[t].name for t in _linked_ids(prm) if t in tanks) or '—','Status':dd.get('status'),'Liquid [m3/d]':w['liq'],'Oil [m3/d]':w['oil'],'Water [m3/d]':w['wat'],'Gas [Sm3/d]':w['gas'],'Reservoir pressure [bar]':float(prm.get('reservoir_pressure_bar',0.0)),'WHP [bar]':dd['whp_bar'],'BHP [bar]':dd['bhp_bar'],'Cumulative liquid [m3]':state[n['id']]['cum_liq'],'Cumulative oil [Sm3]':state[n['id']]['cum_oil'],'Uptime [%]':100*w.get('up',1.0)})
         for tid,tk in tanks.items(): tank_rows.append({'Date':date,**tk.row()})
         try:
             if not store_elements: raise StopIteration

@@ -57,6 +57,8 @@ from ui.properties import (constraint_editor, role_phase_editor, separator_type_
 from network.equipment import convert_edge_equipment_to_nodes, INLINE_KINDS
 from ui.history import normalize_project
 from ui.topology import validate_topology, auto_layout
+from ui.tank_alloc_view import tank_alloc_editor
+from network.reservoir_mb import tank_alloc, linked_tank_ids
 from ui.widgets import synced_number, synced_slider, synced_select, synced_text, synced_checkbox, clean_num, clean_text, to_builtin
 from network.forecast import run_forecast
 from network.field_development import _coerce_value
@@ -222,6 +224,18 @@ with st.sidebar:
     st.caption(TEMPLATES[_tpl_key]['shows'])
     if st.button('Load example',use_container_width=True,key='sb_tpl_load'): load_template(st,_tpl_key,reset_solve); bump_canvas(); st.rerun()
 
+import time as _time
+_TIMES=[]; _TLAST=[_time.perf_counter(),'start']
+def _T(name):
+    """Mark the start of a page section: the time since the previous mark is charged to the previous section (shown in Tools > Model checks)."""
+    now=_time.perf_counter(); _TIMES.append((_TLAST[1],now-_TLAST[0])); _TLAST[0]=now; _TLAST[1]=name
+# ---- rerun-storm guard: a script that keeps re-running itself looks like a hung app
+_now=_time.time(); _rr=[t for t in st.session_state.get('_run_stamps',[]) if _now-t<6.0]+[_now]; st.session_state['_run_stamps']=_rr
+if len(_rr)>=14:
+    st.session_state['_run_stamps']=[]
+    st.error('The page re-ran itself 14 times within 6 seconds, so it was stopped to avoid a hang. Nothing was lost. Please note the last thing you clicked (and the "Last run timing" in Tools -> Model checks) and reload the page.')
+    st.json({'canvas_rev':st.session_state.get('canvas_rev'),'selected':st.session_state.get('selected'),'applied_note':st.session_state.get('_applied_note'),'solve_request':bool(st.session_state.get('solve_request'))})
+    st.stop()
 G=st.tabs(['🗺️ Network','🛢️ Reservoir & wells','📊 Results','📈 Prognosis','📁 Cases & Data','🧰 Tools'])
 tab_net=G[0]
 with G[1]: tab_nodal,tab_tanks,tab_groups,tab_sources,tab_pvt,tab_cal=st.tabs(['Nodal analysis','Tanks & coupling','Groups','Prediction source','Fluid & PVT','Calibration'])
@@ -230,6 +244,7 @@ with G[3]: tab_forecast,tab_annual,tab_development,tab_uncertainty,tab_rel=st.ta
 with G[5]: tab_ops,tab_qa28,tab_io27=st.tabs(['Engineering tools','Model checks','Import / export & snapshots'])
 # merged sections: blocks below write into the same tab in code order
 tab_constraints=tab_results; tab_fa=tab_diag; tab_res25=tab_tanks; tab_comp=tab_ops; tab_adv=tab_ops; tab_scen29=tab_io27
+_T('tab_net')
 with tab_net:
     _e1,_e2,_e3=st.columns([1.2,2,3])
     _wide=_e1.toggle('Wide editor',value=False,key='ed_wide',help='Full-width canvas; the component properties move below it.')
@@ -391,7 +406,7 @@ with tab_net:
                         p['max_water_cut']=synced_number(st,'Maximum water cut [-]',float(clean_num(p.get('max_water_cut'),0.9)),'rwx'+sid,0.0,0.99)
                         p['gor_rise_factor']=synced_number(st,'GOR rise below Pb [× per fraction of Pb]',float(clean_num(p.get('gor_rise_factor'),3.0)),'rgr'+sid,0.0,50.0)
                 from network.reservoir_mb import Tank
-                t_=Tank(n); linked_=[w['name'] for w in st.session_state.nodes if (w.get('params') or {}).get('reservoir_id')==sid]
+                t_=Tank(n); linked_=[w['name'] for w in st.session_state.nodes if sid in linked_tank_ids(w.get('params'))]
                 st.caption(f"Pore volume {t_.pv/1e6:,.2f} MSm³ (reservoir) · drains to: {', '.join(linked_) or 'no wells yet — drag this tank onto its wells'}")
                 relperm_editor(st,n); communication_editor(st,n,st.session_state.nodes)
             if n['kind'] in ('water_injector','gas_injector'):
@@ -408,22 +423,13 @@ with tab_net:
                 p['depth_m']=unit_input(f"TVD [{ul['length']}]",float(clean_num(p.get('depth_m'),2000.0)),length_to_display,length_from_display,'idp'+sid,0.,10000.)
                 constraint_editor(st,n,None,n['kind'],sid,title='Constraints (this injector)')
                 p['available']=synced_checkbox(st,'Injector available',p.get('available',True) not in (False,'false','False',0),'iav'+sid)
-                tanks_={t['id']:t['name'] for t in st.session_state.nodes if t.get('kind')=='reservoir'}
-                if tanks_:
-                    cur=p.get('reservoir_id') if p.get('reservoir_id') in tanks_ else ''
-                    sel=synced_select(st,'Drains reservoir tank',['']+list(tanks_),cur,'rid'+sid,format_func=lambda k: tanks_.get(k,'— none (own reservoir pressure) —'))
-                    if sel: p['reservoir_id']=sel
-                    else: p.pop('reservoir_id',None)
             if n['kind']=='well':
                 p['available']=synced_checkbox(st,'Well open / available',p.get('available',True) not in (False,'false','False',0),'wav'+sid)
                 tanks_={t['id']:t['name'] for t in st.session_state.nodes if t.get('kind')=='reservoir'}
-                if tanks_:
-                    cur=p.get('reservoir_id') if p.get('reservoir_id') in tanks_ else ''
-                    sel=synced_select(st,'Drains reservoir tank',['']+list(tanks_),cur,'rid'+sid,format_func=lambda k: tanks_.get(k,'— none (own reservoir pressure) —'))
-                    if sel: p['reservoir_id']=sel
-                    else: p.pop('reservoir_id',None)
-                _tk=next((t for t in st.session_state.nodes if t['id']==p.get('reservoir_id') and t.get('kind')=='reservoir'),None)
-                if _tk is not None: st.caption(f"Reservoir pressure: taken from tank **{_tk['name']}** ({pressure_to_display(float(clean_num((_tk.get('params') or {}).get('reservoir_pressure_bar'),250.0)),PROFILE):,.1f} {ul['pressure']}, initial) - edit it on the tank, it is the only pressure input.")
+                if tanks_: tank_alloc_editor(st,p,sid,tanks_)
+                _tks=[(t,s_) for t,s_ in tank_alloc(p) if t in tanks_] if tanks_ else []
+                _tk={'name':' + '.join(tanks_[t] for t,_ in _tks),'params':{'reservoir_pressure_bar':sum(s_*float(clean_num(next(x for x in st.session_state.nodes if x['id']==t).get('params',{}).get('reservoir_pressure_bar'),250.0)) for t,s_ in _tks)}} if _tks else None
+                if _tk is not None: st.caption(f"Reservoir pressure: taken from tank **{_tk['name']}** ({pressure_to_display(float(clean_num((_tk.get('params') or {}).get('reservoir_pressure_bar'),250.0)),PROFILE):,.1f} {ul['pressure']}, initial{', productivity-weighted' if len(_tks)>1 else ''}) - edit it on the tank, it is the only pressure input.")
                 else: p['reservoir_pressure_bar']=unit_input(f"Reservoir pressure (no tank assigned) [{ul['pressure']}]",float(clean_num(p.get('reservoir_pressure_bar'),200)),pressure_to_display,pressure_from_display,'pr'+sid,1.,1500.)
                 p['ipr_model']=synced_select(st,'IPR',['PI','Vogel','Gas'],p.get('ipr_model','PI') if p.get('ipr_model','PI') in ('PI','Vogel','Gas') else 'PI','im'+sid,format_func={'PI':'Productivity index (oil)','Vogel':'Vogel (solution gas)','Gas':'Gas backpressure'}.get)
                 _dar=synced_checkbox(st,'Compute the inflow from reservoir properties (Darcy: vertical / deviated / horizontal, layers)',p.get('darcy') in (True,'true','True',1),'dcon'+sid)
@@ -507,15 +513,18 @@ with tab_net:
         for a in _i.get('constraint_actions',[])[-5:]: st.info(a['message'])
         for w in _i.get('well_warnings',[]): st.warning(w['message'])
 
+_T('tab_elem')
 with tab_elem:
     st.subheader('Element results & profiles')
     st.caption('Pressure, phase rates, velocity and erosional ratio for any node or flowline; tubing and flowline profiles; time series from the last forecast.')
     _r_=solved()
     render_element_results(st,solver_input(st.session_state.nodes,st.session_state.edges)[0],st.session_state.edges,_r_,st.session_state.get('forecast'))
 
+_T('tab_sources')
 with tab_sources:
     render_prediction_sources(st,st.session_state.nodes,st.session_state.edges)
 
+_T('tab_nodal')
 with tab_nodal:
     wells=[n for n in st.session_state.nodes if n['kind']=='well']
     if wells:
@@ -541,7 +550,10 @@ with tab_nodal:
         ws=well_settings(prm)
         from physics.well_model import ipr_pwf, vlp_bhp, solve_well_rate, rate_capacity
         qcap=max(rate_capacity(ws),1.0); qs=[qcap*i/80 for i in range(81)]
-        curve=pd.DataFrame({'q':qs,'IPR':[ipr_pwf(q,ws) for q in qs],'VLP':[vlp_bhp(q,whp,ws)[0] for q in qs]})
+        _ck=json.dumps([ws,whp,qs[-1]],sort_keys=True,default=str); _cc=st.session_state.get('_nodal_curve_cache') or {}
+        if _cc.get('key')==_ck: curve=_cc['curve'].copy()                     # unchanged inputs: do not redo 81 tubing calculations on every page run
+        else:
+            curve=pd.DataFrame({'q':qs,'IPR':[ipr_pwf(q,ws) for q in qs],'VLP':[vlp_bhp(q,whp,ws)[0] for q in qs]}); st.session_state['_nodal_curve_cache']={'key':_ck,'curve':curve.copy()}
         curve=curve[curve['IPR']>=0]
         qop,stat=solve_well_rate(whp,ws)
         _gasp=st.session_state.get('_phase_resolved')=='Gas'; _gk=(1.0-ws['water_cut'])*ws['gor']/1e6
@@ -584,6 +596,7 @@ with tab_nodal:
         render_nodal_tools(st,wid,w['name'],prm,float(whp),st.session_state.nodes,st.session_state.edges,graph_hash(st.session_state.nodes,st.session_state.edges),reset=reset_solve)
     else: st.info('Add a well to run nodal analysis.')
 
+_T('tab_tanks')
 with tab_tanks:
     st.subheader('Tanks')
     st.caption('Tanks hold the in-place volume and fluid phase. Drag a tank onto a well (or injector) in the editor to assign it; linked wells take the tank pressure, and the forecast depletes the tank by material balance.')
@@ -595,6 +608,7 @@ with tab_tanks:
     else:
         st.info('No reservoir tank yet. Add a **Tank** from the editor palette, set its in-place volume and fluid phase in the property panel, then drag it onto the wells it drains.')
 
+_T('tab_diag')
 with tab_diag:
     pipes=[e for e in st.session_state.edges if e.get('kind','pipeline')=='pipeline']
     r=solved()
@@ -610,6 +624,7 @@ with tab_diag:
         st.write('Profile outlet pressure:',f"{pressure_to_display(prof['pressure_bar'][-1],PROFILE):.2f} {ul['pressure']}",' | Network node:',f"{pressure_to_display(p[outlet_node],PROFILE):.2f} {ul['pressure']}")
         if prof['regime']: st.dataframe(pd.DataFrame({'Segment':range(1,len(prof['regime'])+1),'Liquid holdup':prof['holdup'],'Flow regime':prof['regime']}),hide_index=True,use_container_width=True)
 
+_T('tab_fa')
 with tab_fa:
     st.subheader('Flow assurance')
     st.caption('Post-solve screening layer. Thermal, hydrate, wax, erosion, liquid-loading and slugging indicators do not alter hydraulic convergence and are not substitutes for compositional or transient flow-assurance simulation.')
@@ -635,6 +650,7 @@ with tab_fa:
                 for item in choice['limitations']: st.write('•',item)
             st.download_button('Export flow-assurance JSON',json.dumps(to_builtin(fa),indent=2,default=str),'fieldnet_flow_assurance.json','application/json',use_container_width=True)
 
+_T('tab_results')
 with tab_results:
     r=solved()
     if not r:
@@ -680,6 +696,7 @@ with tab_results:
                 st.plotly_chart(px.bar(_bf,x='Name',y=_vc,color='Kind',title=_vc),use_container_width=True,key='br_chart'); st.dataframe(_bf,hide_index=True,use_container_width=True)
             else: st.caption('No values for this parameter in the current solve.')
 
+_T('tab_constraints')
 with tab_constraints:
     st.info('The constraint tables moved to the **Network** tab → *Data tables* → Constraints, next to the layout. This tab shows the check results.')
     r=solved()
@@ -698,6 +715,7 @@ with tab_constraints:
             st.subheader('Rotating equipment')
             st.dataframe(pd.DataFrame(info['equipment']),hide_index=True,use_container_width=True)
 
+_T('tab_ops')
 with tab_ops:
     st.subheader('Debottlenecking & sensitivity')
     st.caption('Production optimisation now lives in the **Solve** toolbar of the Network tab (tick *Optimise while solving*): the optimiser, capacity constraints and parallel options are one operation with the solve. Use this section for what-if screening.')
@@ -727,10 +745,12 @@ with tab_ops:
     st.divider()
 
 
+_T('tab_comp')
 with tab_comp:
     render_compressor_optimization(st, st.session_state.nodes, st.session_state.edges, st.session_state.unit_profile)
 
 
+_T('tab_cal')
 with tab_cal:
     st.subheader('Calibration & history matching')
     cal_a,cal_b=st.tabs(['Match measured pressures & rates','Match well tests (IPR / VLP)'])
@@ -762,24 +782,30 @@ with tab_cal:
             export={k:v for k,v in c.items() if k not in ('calibrated_nodes','calibrated_edges','solver_info')}
             st.download_button('Download calibration JSON',json.dumps(to_builtin(export),indent=2,default=str),'fieldnet_calibration.json','application/json',use_container_width=True)
 
+_T('tab_forecast')
 with tab_forecast:
     render_forecast(st, st.session_state.nodes, st.session_state.edges)
 
+_T('tab_annual')
 with tab_annual:
     render_annual(st,current_hub(st,st.session_state.nodes,st.session_state.edges,solved))
 
+_T('tab_groups')
 with tab_groups:
     render_groups(st,st.session_state.nodes,st.session_state.edges,current_hub(st,st.session_state.nodes,st.session_state.edges,solved),solved,reset_solve)
 
+_T('tab_development')
 with tab_development:
     render_scenarios(st, st.session_state.nodes, st.session_state.edges)
     from ui.drainage_view import render_drainage
     render_drainage(st, st.session_state.nodes, st.session_state.edges)
 
+_T('tab_uncertainty')
 with tab_uncertainty:
     render_uncertainty(st, st.session_state.nodes, st.session_state.edges)
 
 
+_T('tab_rel')
 with tab_rel:
     st.subheader('Reliability & availability')
     st.caption('Screening reliability Monte Carlo. Failure/repair availability is separate from hydraulic convergence; exponential MTBF/MTTR assumptions should be replaced with asset data when available.')
@@ -799,6 +825,7 @@ with tab_rel:
         rrf=pd.DataFrame(rr['realizations']); st.plotly_chart(charts.style(px.histogram(rrf,x='availability',title='Availability distribution')),use_container_width=True); st.dataframe(rrf,hide_index=True,use_container_width=True)
         st.download_button('Download reliability JSON',json.dumps(to_builtin(rr),indent=2,default=str),'fieldnet_reliability.json','application/json',use_container_width=True)
 
+_T('tab_res25')
 with tab_res25:
     st.subheader('Tanks & coupling')
     st.caption('Everything is drawn on the network canvas: drag a tank onto a well/injector to assign what it drains, drag a tank onto another tank to let them communicate. This tab only summarises and fine-tunes that model; the Forecast tab runs it.')
@@ -896,10 +923,12 @@ with tab_res25:
 
 
 
+_T('tab_pvt')
 with tab_pvt:
     render_pvt(st,st.session_state.nodes,st.session_state.edges,solved)
 
 
+_T('G[4]')
 with G[4]:
     _c_tpl,_c_cases,_c_data=st.tabs(['Templates & examples','Cases','Data hub, export & post-processing'])
     with _c_tpl: render_templates(st,reset=reset_solve,library=library(st),solved=solved)
@@ -907,10 +936,12 @@ with G[4]:
     with _c_data: render_data(st,st.session_state.nodes,st.session_state.edges,current_hub(st,st.session_state.nodes,st.session_state.edges,solved),solved)
 
 
+_T('tab_io27')
 with tab_io27:
     render_interchange_v27(st, st.session_state.nodes, st.session_state.edges)
 
 
+_T('tab_qa28')
 with tab_qa28:
     from network.input_check import check_inputs, summarize
     st.subheader('Input & unit consistency')
@@ -919,6 +950,9 @@ with tab_qa28:
     _cs=summarize(_chk); _a,_b,_c=st.columns(3); _a.metric('Errors',_cs['error']); _b.metric('Warnings',_cs['warning']); _c.metric('Notes',_cs['info'])
     if _chk: st.dataframe(pd.DataFrame(_chk).rename(columns={'severity':'Severity','element':'Element','field':'Field','message':'Message'})[['Severity','Element','Field','Message']],hide_index=True,use_container_width=True)
     else: st.success('No input problems found.')
+    with st.expander('Last run timing (seconds per page section)'):
+        _rt=st.session_state.get('_run_times') or []
+        if _rt: st.dataframe(pd.DataFrame([{'Section (until the next one starts)':a,'Seconds':round(b,3)} for a,b in sorted(_rt,key=lambda x:-x[1])]),hide_index=True,use_container_width=True); st.caption('Total of the previous page run: %.2f s. If a click feels slow, the top row names the section to look at.'%sum(b for _,b in _rt))
     st.divider()
     st.subheader('Engineering QA & model assurance')
     st.caption('Read-only assurance: definite invariant violations are errors; suspicious engineering values are warnings. No inputs are auto-corrected.')
@@ -931,9 +965,12 @@ with tab_qa28:
         st.download_button('Download model quality report',json.dumps(to_builtin(qr),indent=2,default=str),'fieldnet_model_quality.json','application/json',use_container_width=True)
 
 
+_T('tab_scen29')
 with tab_scen29:
     render_scenario_v29(st, st.session_state.nodes, st.session_state.edges, st.session_state.unit_profile)
 
+_T('tab_adv')
 with tab_adv:
     render_advanced(st,solver_input(st.session_state.nodes,st.session_state.edges)[0],st.session_state.edges,solved())
-
+_T('end')
+st.session_state['_run_times']=[(a,b) for a,b in _TIMES if b>=0.0005]

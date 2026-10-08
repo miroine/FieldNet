@@ -48,4 +48,8 @@ Streamlit could not be installed in the build sandbox, so the live UI has **neve
 - [ ] Schedule: pick *Element type* = Well, event *Darcy: permeability*, set a date, add; run the forecast: PI drops/rises from that date. Repeat with a Tank event (target RF, aquifer) and a temperature event in °F on the Field profile.
 - [ ] Tools → Model checks → *Input & unit consistency*: set a tubing ID of 3.5 → error naming "inch"; fix it → clean.
 
+- [ ] Select a well, in *Drains reservoir tank(s)* pick two tanks, set shares 60/40: caption shows the weighted pressure; Apply; Solve; forecast: both tanks lose pressure, the well row in the results names both tanks. Drag a second tank onto a well in the canvas: same result.
+- [ ] Click **Apply changes** (properties panel and canvas) on a larger model and note how long it takes; open Tools → Model checks → *Last run timing* and send me the top rows if it is slow. If the red "page re-ran itself" message appears, send a screenshot.
+- [ ] Network tab → Data tables → *Prepare export files* builds the Excel/CSV/YAML/JSON downloads.
+
 Report: screenshot + the browser/terminal traceback for anything that fails.

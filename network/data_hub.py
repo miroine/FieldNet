@@ -46,7 +46,7 @@ def model_tables(nodes, edges):
     for n in nodes:
         p = n.get('params') or {}
         if n.get('kind') == 'well':
-            wells.append({'Well': n.get('name') or n['id'], 'Well ID': n['id'], 'Tank': p.get('reservoir_id'), 'Group': p.get('group', ''), 'PI [m3/d/bar]': _well_pi(n), 'IPR': ('Darcy ' if p.get('darcy') in (True, 'true', 'True', 1) else '') + str(p.get('ipr_model', 'PI')), 'Skin': p.get('skin', 0.0),
+            wells.append({'Well': n.get('name') or n['id'], 'Well ID': n['id'], 'Tank': ' + '.join(__import__('network.reservoir_mb', fromlist=['x']).linked_tank_ids(p)) or None, 'Group': p.get('group', ''), 'PI [m3/d/bar]': _well_pi(n), 'IPR': ('Darcy ' if p.get('darcy') in (True, 'true', 'True', 1) else '') + str(p.get('ipr_model', 'PI')), 'Skin': p.get('skin', 0.0),
                           'Depth [m]': p.get('depth_m'), 'Tubing ID [m]': p.get('tubing_id_m'), 'Water cut': p.get('water_cut'), 'GOR [Sm3/Sm3]': p.get('gor_sm3sm3'), 'API': p.get('api'), 'Lift': p.get('lift_type', 'none'), 'Fluid': p.get('fluid_name', '')})
         elif n.get('kind') == 'reservoir':
             tanks.append({'Tank': n.get('name') or n['id'], 'Tank ID': n['id'], 'Group': p.get('group', ''), 'Phase': p.get('fluid_phase', 'oil'), 'Pi [bar]': p.get('reservoir_pressure_bar'), 'STOIIP [Sm3]': p.get('stoiip_sm3'),

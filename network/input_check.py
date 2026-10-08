@@ -135,13 +135,17 @@ def check_inputs(nodes, edges, events=None):
     for n in nodes:
         k = n.get('kind'); p = n.get('params') or {}
         if k in ('well', 'water_injector', 'gas_injector', 'injector'):
-            rid = p.get('reservoir_id')
-            if rid and rid not in tanks:
-                _add(out, 'error', n, 'params.reservoir_id', f'points to tank {rid!r}, which does not exist')
-            elif rid:
-                own = _num(p.get('reservoir_pressure_bar')); tp = _num((tanks[rid].get('params') or {}).get('reservoir_pressure_bar'))
-                if own is not None and tp is not None and abs(own - tp) > 1.0:
-                    _add(out, 'info', n, 'params.reservoir_pressure_bar', f'stored own pressure {own:g} bar is ignored; the tank ({tp:g} bar) is the only pressure input')
+            from network.reservoir_mb import tank_alloc
+            al = tank_alloc(p); missing = [t for t, _ in al if t not in tanks]
+            if missing:
+                _add(out, 'error', n, 'params.reservoir_id', f'points to tank {missing[0]!r}, which does not exist')
+            elif al:
+                tps = [(s_, _num((tanks[t].get('params') or {}).get('reservoir_pressure_bar'))) for t, s_ in al]
+                own = _num(p.get('reservoir_pressure_bar')); tp = sum(s_ * v for s_, v in tps if v is not None)
+                if own is not None and abs(own - tp) > 1.0:
+                    _add(out, 'info', n, 'params.reservoir_pressure_bar', f'stored own pressure {own:g} bar is ignored; the tank pressure ({tp:g} bar{", productivity-weighted over " + str(len(al)) + " tanks" if len(al) > 1 else ""}) is the only pressure input')
+                if len(al) > 1 and k != 'well':
+                    _add(out, 'warning', n, 'params.reservoir_alloc', 'injectors are supported through the first tank only')
             elif tanks:
                 _add(out, 'warning', n, 'params.reservoir_id', 'no tank assigned: the element uses its own fixed reservoir pressure (no depletion)')
         if k == 'well':
@@ -151,7 +155,7 @@ def check_inputs(nodes, edges, events=None):
             if p.get('darcy') in (True, 'true', 'True', 1):
                 try:
                     from physics.darcy_ipr import darcy_ipr
-                    tp = _num((tanks.get(p.get('reservoir_id'), {}).get('params') or {}).get('reservoir_pressure_bar')) or _num(p.get('reservoir_pressure_bar')) or 200.0
+                    tp = _num((tanks.get(p.get('reservoir_id'), {}).get('params') or {}).get('reservoir_pressure_bar')) or _num(p.get('reservoir_pressure_bar')) or 200.0   # primary tank (screening)
                     for w in darcy_ipr(p, tp, 'gas' if str(p.get('ipr_model')) == 'Gas' else 'oil').get('warnings', []):
                         _add(out, 'warning', n, 'params.darcy', str(w))
                 except Exception as exc:

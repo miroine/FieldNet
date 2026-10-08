@@ -135,3 +135,85 @@ def test_known_conversion_constants():
     assert us.temperature_to_display(100.0, 'field') == pytest.approx(212.0)
     assert us.gor_to_display(1.0, 'field') == pytest.approx(5.6146, rel=1e-3)
     assert us.pi_to_display(1.0, 'field') == pytest.approx(6.2898 / 14.5038, rel=1e-3)
+
+
+# ---- Monte Carlo as a background job -------------------------------------------------------------------------------------
+def _mc_setup(samples=4):
+    from network.uncertainty import MonteCarloConfig, UncertainParameter
+    from network.field_development import DevelopmentScenario
+    n, e = demo_field_case(); w = [x for x in n if x['kind'] == 'well']
+    pars = [UncertainParameter(f'pi{i}', path='params.pi_m3d_bar', target_id=w[i]['id']) for i in range(2)]
+    return n, e, DevelopmentScenario('mc', '2026-01-01', 0.5, 90), MonteCarloConfig(samples=samples, seed=3, parameters=pars)
+
+
+def test_mc_job_runs_in_background_and_matches_the_plain_run():
+    import time
+    from network.mc_job import start_job, fast_runner
+    from network.uncertainty import run_monte_carlo
+    n, e, sc, cfg = _mc_setup()
+    job = start_job('t_mc', n, e, sc, cfg, vlp_segments=4)
+    for _ in range(300):
+        if job.status != 'running': break
+        time.sleep(0.2)
+    assert job.status == 'done' and job.done == job.n == 4 and job.result['successful_samples'] == 4
+    ref = run_monte_carlo(n, e, sc, cfg, forecast_runner=fast_runner(4))
+    assert [r['cumulative_oil_m3'] for r in job.result['runs']] == pytest.approx([r['cumulative_oil_m3'] for r in ref['runs']])
+
+
+def test_mc_job_can_be_cancelled():
+    import time
+    from network.mc_job import start_job
+    n, e, sc, cfg = _mc_setup(samples=40)
+    job = start_job('t_mc2', n, e, sc, cfg, vlp_segments=4); time.sleep(0.5); job.cancel()
+    for _ in range(300):
+        if job.status != 'running': break
+        time.sleep(0.2)
+    assert job.status == 'cancelled' and job.done < 40
+
+
+# ---- a well that drains several tanks ----------------------------------------------------------------------------------------
+def _two_tank_case():
+    import copy
+    n, e = demo_field_case(); t1 = next(x for x in n if x['kind'] == 'reservoir')
+    t2 = copy.deepcopy(t1); t2['id'] = 'T2'; t2['name'] = 'Tank 2'; t2['params']['reservoir_pressure_bar'] = t1['params']['reservoir_pressure_bar'] - 60.0
+    n.append(t2); w = next(x for x in n if x['kind'] == 'well')
+    w['params']['reservoir_id'] = t1['id']; w['params']['reservoir_alloc'] = [{'tank_id': t1['id'], 'share': 60.0}, {'tank_id': 'T2', 'share': 40.0}]
+    return n, e, t1, t2, w
+
+
+def test_tank_alloc_shares_normalise_and_fall_back_to_single_tank():
+    from network.reservoir_mb import tank_alloc, primary_tank_id, linked_tank_ids
+    assert tank_alloc({'reservoir_id': 'A'}) == [('A', 1.0)] and tank_alloc({}) == []
+    a = tank_alloc({'reservoir_alloc': [{'tank_id': 'A', 'share': 30}, {'tank_id': 'B', 'share': 70}, {'tank_id': 'C', 'share': 0}]})
+    assert a[0][0] == 'B' and sum(s for _, s in a) == pytest.approx(1.0) and linked_tank_ids({'reservoir_alloc': [{'tank_id': 'A', 'share': 1}]}) == ['A']
+    assert primary_tank_id({'reservoir_id': 'Z'}) == 'Z'
+
+
+def test_commingled_well_sees_the_weighted_tank_pressure():
+    from network.reservoir_mb import apply_tank_links
+    n, e, t1, t2, w = _two_tank_case()
+    out = next(x for x in apply_tank_links(n) if x['id'] == w['id'])
+    p1, p2 = t1['params']['reservoir_pressure_bar'], t2['params']['reservoir_pressure_bar']
+    assert out['params']['reservoir_pressure_bar'] == pytest.approx(0.6 * p1 + 0.4 * p2, rel=1e-6)
+
+
+def test_forecast_depletes_both_tanks_of_a_commingled_well():
+    from network.forecast import run_forecast
+    n, e, t1, t2, w = _two_tank_case()
+    r = run_forecast(n, e, '2026-01-01', years=0.5, step_days=60)
+    last = {row['Tank'] if 'Tank' in row else None: row for row in r['tanks'][-2:]} if r['tanks'] else {}
+    np_by = {}
+    for row in r['tanks']:
+        for k, v in row.items():
+            if k == 'Cum oil [Sm3]': np_by[row['Tank ID']] = v
+    assert len(np_by) >= 2 and all(v > 0 for v in np_by.values()), np_by          # both tanks produced through the one well
+    assert any(' + ' in str(x.get('Tank')) for x in r['wells'] if x['Well ID'] == w['id'])
+
+
+def test_dropping_a_second_tank_on_a_well_makes_it_commingled():
+    from ui.graph_contract import normalize_graph
+    n, e, t1, t2, w = _two_tank_case(); w['params'].pop('reservoir_alloc')
+    e2 = list(e) + [{'id': 'ZZ', 'source': 'T2', 'target': w['id'], 'kind': 'pipeline', 'params': {}}]
+    n2, _, issues = normalize_graph(n, e2)
+    ww = next(x for x in n2 if x['id'] == w['id'])
+    assert {a['tank_id'] for a in ww['params']['reservoir_alloc']} == {t1['id'], 'T2'} and ww['params']['reservoir_id'] == t1['id']

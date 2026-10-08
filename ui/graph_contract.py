@@ -81,7 +81,14 @@ def normalize_graph(nodes, edges):
         pair = {kind.get(s), kind.get(t)}
         if 'reservoir' in pair and pair & {'well', 'water_injector', 'gas_injector', 'injector'}:
             tank, other = (s, t) if kind.get(s) == 'reservoir' else (t, s)
-            nd = next(n for n in out_nodes if n['id'] == other); nd['params']['reservoir_id'] = tank
+            nd = next(n for n in out_nodes if n['id'] == other)
+            old = nd['params'].get('reservoir_id')
+            if nd.get('kind') == 'well' and old and old != tank and old in kind:                      # a second tank on a well: commingled production
+                al = nd['params'].get('reservoir_alloc') or [{'tank_id': old, 'share': 1.0}]
+                if tank not in [a.get('tank_id') for a in al]: al = al + [{'tank_id': tank, 'share': 1.0}]
+                nd['params']['reservoir_alloc'] = al; issues.append(f"{nd.get('name', other)} now drains {len(al)} tanks (equal productivity shares; edit them in the well settings).")
+                tank = old
+            nd['params']['reservoir_id'] = tank
             issues.append(f"Connection {e.get('id')} between reservoir tank and {nd.get('name', other)} converted to a drainage assignment (tanks feed wells; they are not pipes)."); continue
         if s not in seen or t not in seen: issues.append(f"Dropped connection {e.get('id')} with a missing endpoint"); continue
         if s == t: issues.append(f"Dropped self-loop {e.get('id')}"); continue

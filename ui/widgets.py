@@ -98,3 +98,11 @@ def synced_checkbox(st, label, model_value, key):
     out=bool(st.checkbox(label,key=key))
     _state(st)[mk]=out
     return out
+
+
+def synced_multiselect(st, label, options, model_value, key, format_func=str):
+    options=list(options); v=[x for x in (model_value or []) if x in options]
+    mk=_seed(st,key,v)
+    out=list(st.multiselect(label,options,key=key,format_func=format_func))
+    _state(st)[mk]=out
+    return out
