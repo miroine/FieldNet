@@ -156,7 +156,7 @@ def test_numpy_values_are_made_json_safe():
 def test_canvas_sends_revision_and_selection():
     text = (Path(__file__).parents[1] / 'ui/fieldnet_canvas/build/index.html').read_text()
     assert 'rev:Date.now()' in text and "schema:SCHEMA" in text
-    assert 'selected=m.id;render();send()' in text
+    assert 'selected=m.id;render();sendSel()' in text
 
 
 # ---------------- v30.1 editor -> solver contract ----------------
