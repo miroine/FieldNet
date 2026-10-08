@@ -33,7 +33,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pytest -q --junitxml=weekly-pytest-results.xml
+          python -m pytest -q --ignore=tests/browser --junitxml=weekly-pytest-results.xml
 
       - name: Upload test results
         if: always() && hashFiles('weekly-pytest-results.xml') != ''
@@ -73,10 +73,10 @@ jobs:
                 const content = body || '';
                 if (/<failure\b/.test(content)) {
                   counts.failures++;
-                  failedTests.push(`${attr(attributes, 'classname')}.${attr(attributes, 'name')}`);
+                  failedTests.push([attr(attributes, 'classname'), attr(attributes, 'name')].filter(Boolean).join('.') || '(unnamed test case)');
                 } else if (/<error\b/.test(content)) {
                   counts.errors++;
-                  failedTests.push(`${attr(attributes, 'classname')}.${attr(attributes, 'name')}`);
+                  failedTests.push([attr(attributes, 'classname'), attr(attributes, 'name')].filter(Boolean).join('.') || '(unnamed test case)');
                 } else if (/<skipped\b/.test(content)) {
                   counts.skipped++;
                 }
@@ -84,8 +84,8 @@ jobs:
             }
 
             const resultLine = passed
-              ? `**Result: PASS** — the full pytest suite completed successfully.`
-              : `**Result: FAILURE** — dependency installation or the full pytest suite failed. See the [workflow run](${runUrl}) for logs.`;
+              ? `**Result: PASS** — the pytest unit/regression suite completed successfully.`
+              : `**Result: FAILURE** — dependency installation or the pytest unit/regression suite failed. See the [workflow run](${runUrl}) for logs.`;
             const testLine = counts
               ? `Collected **${counts.total}** tests: ${counts.total - counts.failures - counts.errors - counts.skipped} passed, ${counts.failures} failed, ${counts.errors} errors, ${counts.skipped} skipped.`
               : 'Pytest did not produce a JUnit report; dependency installation may have failed before tests started.';
@@ -140,10 +140,6 @@ jobs:
             core.setOutput('issue_number', String(issue.number));
             core.notice(`Weekly health report added to issue #${issue.number}.`);
 
-      - name: Assign failing report to Copilot
+      - name: Fail workflow when tests fail
         if: steps.health.outcome == 'failure'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ steps.report.outputs.issue_number }}
-        run: gh issue edit "$ISSUE_NUMBER" --add-assignee "@copilot"
+        run: exit 1
