@@ -247,11 +247,3 @@ def run_solve(state, solver, **kwargs):
     if ok and p: state['v21_warm_start'] = {'pressures': p, 'flows': q, 'well_rates': {k: v['liquid_rate_m3d'] for k, v in d.items()}}
     else: state.pop('v21_warm_start', None)
     return state['solve']
-    ok = bool(p) and info.get('quality_gate') == 'PASS'
-    if ok: msg = f"Converged · {sum(v.get('liquid_rate_m3d', 0.0) for v in d.values()):,.0f} m³/d liquid"
-    else:
-        errs = [x.get('message', '') for x in info.get('debug', []) if x.get('severity') == 'error'] or [info.get('message', 'Solve failed')]
-        msg = ' | '.join(str(m) for m in errs[:3])
-    state['solve'] = {'hash': h, 'status': SOLVED if ok else FAILED, 'message': msg, 'results': (p, q, info, d)}
-    if p: state['v21_warm_start'] = {'pressures': p, 'flows': q, 'well_rates': {k: v['liquid_rate_m3d'] for k, v in d.items()}}
-    return state['solve']

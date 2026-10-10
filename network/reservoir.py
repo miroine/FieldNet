@@ -25,7 +25,7 @@ def update_tank(tank, withdrawal_m3, injection_m3=0.0, aquifer_m3=0.0):
     tank.cumulative_withdrawal_m3 += max(float(withdrawal_m3),0.0)
     tank.cumulative_injection_m3 += max(float(injection_m3),0.0)
     support=max(float(injection_m3),0.0)+max(float(aquifer_m3),0.0)
-    net=max(float(withdrawal_m3)-support,0.0)
+    net=float(withdrawal_m3)-support
     capacity=max(tank.pore_volume_m3*tank.total_compressibility_1bar,1e-9)
     tank.pressure_bar=max(tank.min_pressure_bar,tank.pressure_bar-net/capacity)
     return tank.pressure_bar
