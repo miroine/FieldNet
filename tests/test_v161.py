@@ -49,5 +49,5 @@ def test_v161_export_consistency_and_identity():
 
 def test_v161_audit_identity_and_physical_gate_present():
     n,e=demo_case(); p,q,info,details=solve_professional(n,e); a=calculation_audit(n,e,info,details)
-    assert a['application']=='FieldNet v29.1'
+    assert a['application']=='FieldNet v32.6' and a['license_note']=='MIT License'
     assert 'physical_quality_gate' in a and a['author']=='Merouane Hamdani'
