@@ -130,7 +130,7 @@ with st.sidebar:
     with st.expander('Unit reference conditions'):
         st.write(f"Standard volumes: {STANDARD_CONDITIONS['standard_temperature_c']:.0f} °C and {STANDARD_CONDITIONS['standard_pressure_bara']:.5f} bara. Pressure-dependent PVT uses absolute pressure.")
 apply_theme(st,st.session_state.theme_name)
-st.markdown("<div class='fieldnet-brand'><h2>FieldNet — Production Network &amp; Prognosis</h2><p>Made by Merouane Hamdani · For non-commercial use · Independent engineering prototype</p></div>",unsafe_allow_html=True)
+st.markdown("<div class='fieldnet-brand'><h2>FieldNet — Production Network &amp; Prognosis</h2><p>Made by Merouane Hamdani · MIT licensed · Independent engineering prototype</p></div>",unsafe_allow_html=True)
 st.caption('Equinor-inspired themes are unofficial and are not affiliated with, endorsed by, or sponsored by Equinor ASA. Validate engineering correlations before operational use.')
 if 'nodes' not in st.session_state: st.session_state.nodes,st.session_state.edges=demo_field_case()
 if 'solve' not in st.session_state: st.session_state.solve=None
@@ -507,7 +507,7 @@ with tab_net:
         nn,ee=normalize_project(pj); nn,ee,gi=normalize_graph(nn,ee); st.session_state.nodes,st.session_state.edges=(auto_layout(nn,ee) if len({(n['x'],n['y']) for n in nn})<=1 else nn),ee; reset_solve(); st.session_state.graph_issues=gi; bump_canvas(); st.success('Project loaded'); st.rerun()
     render_data_tables(st,st.session_state.nodes,st.session_state.edges,solved(),st.session_state.get('forecast'),reset=reset_solve,on_project=_load_project_doc)
     c1,c2,c3=st.columns([1,1,1])
-    payload=json.dumps(to_builtin({'version':'30','application':'FieldNet v30','storage_units':'canonical','display_unit_profile':PROFILE,'standard_conditions':STANDARD_CONDITIONS,'nodes':st.session_state.nodes,'edges':st.session_state.edges}),indent=2,default=str); c3.download_button('Export network SVG',network_svg(st.session_state.nodes,st.session_state.edges,_nlab,(solved() or ({},{},{},{}))[1],edge_labels=_elab,widths=_ew),'fieldnet_network.svg','image/svg+xml',use_container_width=True)
+    payload=json.dumps(to_builtin({'version':'32.6','application':'FieldNet v32.6','storage_units':'canonical','display_unit_profile':PROFILE,'standard_conditions':STANDARD_CONDITIONS,'nodes':st.session_state.nodes,'edges':st.session_state.edges}),indent=2,default=str); c3.download_button('Export network SVG',network_svg(st.session_state.nodes,st.session_state.edges,_nlab,(solved() or ({},{},{},{}))[1],edge_labels=_elab,widths=_ew),'fieldnet_network.svg','image/svg+xml',use_container_width=True)
     c2.download_button('Export case JSON',payload,'fieldnet_case.json','application/json',use_container_width=True)
     uploaded=st.file_uploader('Load FieldNet project JSON',type=['json'],key='project_upload')
     if uploaded is not None and st.button('Load project',use_container_width=True):

@@ -50,4 +50,5 @@ def test_v15_audit_identity():
     from solver.professional import solve_professional
     from solver.audit_report import calculation_audit
     n,e=demo_case(); p,q,i,d=solve_professional(n,e); a=calculation_audit(n,e,i,d)
-    assert a['application']=='FieldNet v29.1' and a['author']=='Merouane Hamdani'
+    assert a['application']=='FieldNet v32.6' and a['author']=='Merouane Hamdani'
+    assert a['license_note']=='MIT License'

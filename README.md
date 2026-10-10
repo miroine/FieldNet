@@ -49,13 +49,13 @@ Then open `http://localhost:8501`.
 
 ## Tests
 
-Install the dependencies first, then run the main regression suites:
+Install the dependencies first, then run the complete Python test suite:
 
 ```sh
-python -m pytest -q tests/test_v30_audit.py tests/test_v31_prognosis.py
+python -m pytest -q --ignore=tests/browser
 ```
 
-GitHub Actions runs these regression suites on pushes and pull requests. The optional browser-based editor test requires Playwright and a Chromium browser:
+GitHub Actions runs the Python test suite on pushes and pull requests. The optional browser-based editor test requires Playwright and a Chromium browser:
 
 ```sh
 python tests/browser/run_editor_browser_test.py
